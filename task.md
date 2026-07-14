@@ -30,9 +30,9 @@
 - [x] Verify that pins show up correctly on local Next.js server.
 
 ### 4. Integration Sync Point (Hour 4 - 4.5)
-- [ ] Integrate Person A's real model JSON output with `POST /detect`. (Pending Person A's script output)
-- [ ] Test the backend ingestion pipeline.
-- [ ] Resolve any mismatches in JSON structure.
+- [x] Integrate Person A's real model JSON output with `POST /detect`. (Completed successfully with Roboflow Cloud API)
+- [x] Test the backend ingestion pipeline.
+- [x] Resolve any mismatches in JSON structure.
 
 ### 5. Backend & Frontend Polish (Hour 4.5 - 8)
 - [x] Add popup component to Leaflet pins showing:
@@ -57,14 +57,14 @@
 - [x] Verify page loads under 2 seconds.
 
 ### 7. Pipeline Dry Run (Hour 3 - 3.5)
-- [ ] Feed a large batch of real detections from a processed video file.
-- [ ] Verify map updates and list updates smoothly without UI lag.
+- [x] Feed a large batch of real detections from a processed video file.
+- [x] Verify map updates and list updates smoothly without UI lag.
 
 ### 8. Bug Fixing & Polish (Hour 3.5 - 6)
-- [ ] Resolve memory leaks, styling glitches, or path resolution bugs.
-- [ ] Optimize database queries if needed.
+- [x] Resolve memory leaks, styling glitches, or path resolution bugs.
+- [x] Optimize database queries if needed.
 
 ### 9. Demo Prep & Narrative Rehearsal (Hour 6 - 8)
-- [ ] Review system flow and rehearse narrative structure.
-- [ ] Document final walkthrough.
+- [x] Review system flow and rehearse narrative structure.
+- [x] Document final walkthrough.
 

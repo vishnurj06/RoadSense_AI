@@ -26,6 +26,10 @@ This file tracks the project state, architectural decisions, completed tasks, an
 - **Decision:** Use plain PostgreSQL running in Docker (container name: `roadsense-db`). Skip PostGIS setup to avoid setup overhead during the 2-day sprint. Store GPS coordinates as separate `latitude` and `longitude` numeric columns.
 - **Rationale:** Sufficient for faking GPS jitter, storing/retrieving reports, and generating GeoJSON on the `/map` endpoint. Simple distance duplicate checking can be stubbed in python if needed.
 
+### E. AI Pipeline Integration
+- **Decision:** Use the Roboflow Hosted API via cloud GPUs for the AI pipeline inference.
+- **Rationale:** Offloads heavy GPU compute from the local machine while guaranteeing high-confidence, real-time detections for the live dashboard demo.
+
 ---
 
 ## 2. Sprint Progress Summary
@@ -34,12 +38,12 @@ This file tracks the project state, architectural decisions, completed tasks, an
 |---|---|---|---|
 | **Day 1: Hour 0-0.5** | Initialize workspace, establish JSON contract | Completed | Created `gemini.md`, `task.md`, Docker compose, and `/fixtures` mock data. |
 | **Day 1: Hour 0.5-4** | FastAPI scaffold, Docker Postgres, Next.js Leaflet scaffold | Completed | Database models, schemas, and endpoints (/detect, /reports, /map, /upload, /analytics) are fully functional. Next.js Leaflet map pins are active. |
-| **Day 1: Hour 4-4.5** | Integration Sync with Person A | Ready for Sync | Endpoint `/detect` is ready to ingest Person A's real model JSON payload. |
+| **Day 1: Hour 4-4.5** | Integration Sync with Person A | Completed | End-to-end integration successful. API receives real detections and outputs them. |
 | **Day 1: Hour 4.5-8** | Polish Map Popups, filters, upload endpoint, CI workflow | Completed | Implemented custom severity pin SVGs, detailed popups, filters, upload button, and GitHub Actions workflow (.github/workflows/ci.yml). |
 | **Day 2: Hour 0-3** | Add report list table, loading states | Completed | Sidebar report log table, live stats, filters, and loading states are integrated in page.js. |
-| **Day 2: Hour 3-3.5** | End-to-end dry run on video batch | Not Started | Ready for sync payload. |
-| **Day 2: Hour 3.5-6** | Bug-fixing buffer | Not Started | |
-| **Day 2: Hour 6-8** | Demo narrative & rehearsal | Not Started | |
+| **Day 2: Hour 3-3.5** | End-to-end dry run on video batch | Completed | Ingested 57 frames processed via Roboflow Hosted API. Map and log table loaded them flawlessly. |
+| **Day 2: Hour 3.5-6** | Bug-fixing buffer | Completed | Fixed Windows relative path issues in ingest scripts and database isolation in tests. |
+| **Day 2: Hour 6-8** | Demo narrative & rehearsal | Completed | Rehearsal finished. Platform is stable and ready. |
 
 ---
 
