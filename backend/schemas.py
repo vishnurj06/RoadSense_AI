@@ -43,6 +43,12 @@ class ReportCreate(BaseModel):
     image_url: Optional[str] = Field(
         None, description="URL or relative path to the image"
     )
+    speed_kmph: Optional[float] = Field(
+        None, description="Speed of the vehicle in km/h"
+    )
+    model_version: Optional[str] = Field(
+        None, description="Model version used for inference"
+    )
 
 
 class ReportResponse(BaseModel):
@@ -54,4 +60,6 @@ class ReportResponse(BaseModel):
     latitude: float
     longitude: float
     image_url: Optional[str]
+    speed_kmph: Optional[float]
+    model_version: Optional[str]
     detections: List[DetectionResponse] = []

@@ -12,18 +12,19 @@
 
 
 ## B-1: Make Upload Flow Real
-- [ ] Implement `POST /detect-image` in FastAPI:
-  - [ ] Accept `multipart/form-data` image file.
-  - [ ] Save the file to `/static/uploads`.
-  - [ ] Send request to `INFERENCE_URL` with image.
-  - [ ] Persist detections + model_version if returned.
-  - [ ] Return the created report response.
-- [ ] Integrate with Next.js frontend:
-  - [ ] Modify `handleImageUpload` to call `/detect-image`.
-  - [ ] Remove hardcoded mock detections in frontend.
-  - [ ] Handle empty detections gracefully in the UI (e.g., "no hazards found" message, no pin dropped).
-  - [ ] Display `model_version` in the report detail view.
+- [x] Implement `POST /detect-image` in FastAPI:
+  - [x] Accept `multipart/form-data` image file.
+  - [x] Save the file to `/static/uploads` (with collision prevention).
+  - [x] Send request to `INFERENCE_URL` with image using httpx.
+  - [x] Persist detections + model_version if returned.
+  - [x] Return the created report response.
+- [x] Integrate with Next.js frontend:
+  - [x] Modify `handleImageUpload` to call `/detect-image`.
+  - [x] Remove hardcoded mock detections in frontend.
+  - [x] Handle empty detections gracefully in the UI (success toast, no pin dropped).
+  - [x] Display `model_version` and speed in the report detail view (popup & list).
 - [ ] Verify the upload flow: a non-road image yields no pothole pin.
+
 
 ## B-2: PostGIS + Real Duplicate Verification
 - [ ] Upgrade Docker PostgreSQL to PostGIS (`postgis/postgis:15-3.4`).

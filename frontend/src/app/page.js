@@ -42,6 +42,15 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState(null);
+  const [toast, setToast] = useState(null);
+
+  const showToast = (message, type = "info") => {
+    setToast({ message, type });
+    setTimeout(() => {
+      setToast(null);
+    }, 4000);
+  };
+
 
   // Filters State
   const [severityFilter, setSeverityFilter] = useState({
@@ -102,7 +111,7 @@ export default function Dashboard() {
     return true;
   });
 
-  // Handle mock image upload & detection workflow
+  // Handle real image upload & detection workflow
   const handleImageUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -111,62 +120,55 @@ export default function Dashboard() {
       setUploading(true);
       setError(null);
 
-      // 1. POST file to /upload
-      const formData = new FormData();
-      formData.append("file", file);
-
-      const uploadRes = await fetch(`${BACKEND_URL}/upload`, {
-        method: "POST",
-        body: formData
-      });
-
-      if (!uploadRes.ok) throw new Error("Image upload failed.");
-      const { image_url } = await uploadRes.json();
-
-      // 2. Generate random coordinate around Mumbai
+      // 1. Generate random coordinate around Mumbai
       // Mumbai center: Lat 19.0760, Lon 72.8777
       const randomJitterLat = (Math.random() - 0.5) * 0.08;
       const randomJitterLon = (Math.random() - 0.5) * 0.08;
       const mockLat = 19.0760 + randomJitterLat;
       const mockLon = 72.8777 + randomJitterLon;
+      
+      const mockSpeed = Math.round(20 + Math.random() * 50);
 
-      // 3. Post a mock detection matching JSON contract
-      const detectionPayload = {
-        report_id: `user-upload-${Date.now()}`,
-        vehicle_id: "demo-web-upload",
-        timestamp: new Date().toISOString(),
-        gps: {
-          lat: mockLat,
-          lon: mockLon
-        },
-        detections: [
-          {
-            class: "pothole",
-            confidence: 0.94,
-            bbox: [120, 220, 310, 420],
-            severity: "high"
-          }
-        ],
-        image_url: image_url
-      };
+      // 2. Build FormData
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("latitude", mockLat.toString());
+      formData.append("longitude", mockLon.toString());
+      formData.append("vehicle_id", "demo-web-upload");
+      formData.append("speed_kmph", mockSpeed.toString());
 
-      const detectRes = await fetch(`${BACKEND_URL}/detect`, {
+      // 3. Call backend POST /detect-image
+      const response = await fetch(`${BACKEND_URL}/detect-image`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(detectionPayload)
+        body: formData,
       });
 
-      if (!detectRes.ok) throw new Error("Failed to insert detection payload.");
+      if (!response.ok) {
+        const errJson = await response.json().catch(() => ({}));
+        const errDetail = errJson.detail || "Image analysis failed.";
+        throw new Error(errDetail);
+      }
 
-      // Refresh data
+      const reportData = await response.json();
+
+      // 4. Refresh data
       await fetchData();
+
+      // 5. Show toast based on detections
+      if (reportData.detections && reportData.detections.length > 0) {
+        showToast(`Image analyzed: Found ${reportData.detections.length} hazard(s)!`, "success");
+      } else {
+        showToast("Image analyzed: No hazards detected.", "success");
+      }
     } catch (err) {
       console.error(err);
-      setError("Failed to process local upload. Check connection or file.");
+      showToast(err.message, "error");
+      setError(err.message);
     } finally {
       setUploading(false);
     }
   };
+
 
   return (
     <div className="flex flex-col h-screen w-screen bg-slate-950 text-slate-100 overflow-hidden font-sans">
@@ -357,6 +359,11 @@ export default function Dashboard() {
                           >
                             {maxSeverity}
                           </span>
+                          {report.model_version && (
+                            <span className="text-[9px] text-blue-400 font-bold bg-blue-950/40 border border-blue-900/40 px-1.5 py-0.5 rounded-full shrink-0 uppercase tracking-wide">
+                              {report.model_version.split("-").pop()}
+                            </span>
+                          )}
                         </div>
                         <div className="text-[10px] text-slate-500 flex items-center gap-1.5 mt-0.5">
                           <Calendar className="h-3 w-3 shrink-0" />
@@ -366,7 +373,7 @@ export default function Dashboard() {
                               day: "numeric",
                               hour: "2-digit",
                               minute: "2-digit",
-                            })}
+                             })}
                           </span>
                         </div>
                       </div>
@@ -377,8 +384,10 @@ export default function Dashboard() {
                         </div>
                         <span className="text-[9px] text-slate-600 italic truncate">
                           Lat: {report.latitude.toFixed(4)}, Lon: {report.longitude.toFixed(4)}
+                          {report.speed_kmph !== undefined && report.speed_kmph !== null && ` | ${report.speed_kmph} km/h`}
                         </span>
                       </div>
+
                     </div>
                   );
                 })
@@ -390,10 +399,31 @@ export default function Dashboard() {
 
         {/* Right Side: Map Container */}
         <div className="flex-1 h-full min-w-0 relative">
-          <MapComponent reports={filteredReports} />
+          <MapComponent reports={filteredReports.filter(r => r.detections && r.detections.length > 0)} />
         </div>
 
       </div>
+
+      {/* Toast Notification */}
+      {toast && (
+        <div className={`fixed bottom-6 right-6 z-50 flex items-center gap-3 px-4 py-3 rounded-xl shadow-lg border border-slate-800/80 backdrop-blur-md transition-all duration-300 ${
+          toast.type === "success"
+            ? "bg-green-950/90 border-green-500/30 text-green-300"
+            : toast.type === "error"
+            ? "bg-red-950/90 border-red-500/30 text-red-300"
+            : "bg-slate-900/90 border-slate-800 text-slate-300"
+        }`}>
+          {toast.type === "success" ? (
+            <CheckCircle className="h-5 w-5 text-green-400 shrink-0" />
+          ) : toast.type === "error" ? (
+            <AlertTriangle className="h-5 w-5 text-red-400 shrink-0" />
+          ) : (
+            <Activity className="h-5 w-5 text-blue-400 shrink-0" />
+          )}
+          <span className="text-xs font-semibold">{toast.message}</span>
+        </div>
+      )}
     </div>
+
   );
 }

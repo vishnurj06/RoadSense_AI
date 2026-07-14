@@ -122,6 +122,19 @@ export default function MapComponent({ reports }) {
                     Vehicle: <span className="text-slate-100 font-semibold">{report.vehicle_id}</span>
                   </div>
 
+                  {report.speed_kmph !== undefined && report.speed_kmph !== null && (
+                    <div className="text-xs text-slate-300 font-medium mb-1 truncate">
+                      Speed: <span className="text-slate-100 font-semibold">{report.speed_kmph} km/h</span>
+                    </div>
+                  )}
+
+                  {report.model_version && (
+                    <div className="text-xs text-slate-300 font-medium mb-1 truncate">
+                      Model: <span className="text-slate-100 font-semibold">{report.model_version}</span>
+                    </div>
+                  )}
+
+
                   <div className="border-t border-slate-800 my-1.5 pt-1.5">
                     <div className="text-[11px] font-bold text-slate-400 mb-1">Detections:</div>
                     <div className="space-y-1 max-h-24 overflow-y-auto pr-1">

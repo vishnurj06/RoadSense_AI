@@ -13,6 +13,8 @@ class Report(Base):
     latitude = Column(Float, nullable=False)
     longitude = Column(Float, nullable=False)
     image_url = Column(String(500), nullable=True)
+    speed_kmph = Column(Float, nullable=True)
+    model_version = Column(String(100), nullable=True)
 
     detections = relationship(
         "Detection", back_populates="report", cascade="all, delete-orphan"

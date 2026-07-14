@@ -1,9 +1,12 @@
 import os
 import uuid
-from typing import List
-from fastapi import FastAPI, Depends, HTTPException, File, UploadFile, status
+from datetime import datetime
+from typing import List, Optional
+import httpx
+from fastapi import FastAPI, Depends, HTTPException, File, UploadFile, status, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+
 from sqlalchemy.orm import Session
 
 import models
@@ -73,6 +76,8 @@ def create_report(payload: schemas.ReportCreate, db: Session = Depends(get_db)):
         latitude=payload.gps.lat,
         longitude=payload.gps.lon,
         image_url=payload.image_url,
+        speed_kmph=payload.speed_kmph,
+        model_version=payload.model_version,
     )
     db.add(db_report)
 
@@ -85,6 +90,115 @@ def create_report(payload: schemas.ReportCreate, db: Session = Depends(get_db)):
             confidence=det.confidence,
             bbox=det.bbox,
             severity=det.severity,
+        )
+        db.add(db_detection)
+
+    try:
+        db.commit()
+        db.refresh(db_report)
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database insertion failed: {e}",
+        )
+
+    return db_report
+
+
+@app.post(
+    "/detect-image",
+    response_model=schemas.ReportResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def detect_image(
+    file: UploadFile = File(...),
+    latitude: float = Form(..., description="GPS latitude"),
+    longitude: float = Form(..., description="GPS longitude"),
+    vehicle_id: str = Form("demo-web-upload", description="Vehicle identifier"),
+    speed_kmph: Optional[float] = Form(
+        None, description="Optional vehicle speed in km/h"
+    ),
+    db: Session = Depends(get_db),
+):
+    # 1. Validate image format
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="invalid_image: Uploaded file is not an image.",
+        )
+
+    # 2. Save file with UUID prepended to prevent overwrites
+    unique_filename = f"{uuid.uuid4()}_{file.filename}"
+    file_path = os.path.join(UPLOAD_DIR, unique_filename)
+
+    try:
+        contents = await file.read()
+        file_size = len(contents)
+        # Check size (max 10MB)
+        if file_size > 10 * 1024 * 1024:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail="image_too_large: Image exceeds 10 MB limit.",
+            )
+
+        with open(file_path, "wb") as buffer:
+            buffer.write(contents)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to save uploaded file: {e}",
+        )
+
+    # 3. Call INFERENCE_URL/infer using httpx
+    async with httpx.AsyncClient() as client:
+        try:
+            files = {"file": (file.filename, contents, file.content_type)}
+            response = await client.post(
+                f"{INFERENCE_URL}/infer",
+                files=files,
+                data={"conf": 0.5},
+                timeout=15.0,
+            )
+
+            if response.status_code != 200:
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail=f"Inference service failed with status code {response.status_code}: {response.text}",
+                )
+
+            inference_data = response.json()
+        except httpx.RequestError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"Inference service is unreachable at {INFERENCE_URL}: {exc}",
+            )
+
+    # 4. Insert Report
+    report_id = str(uuid.uuid4())
+    db_report = models.Report(
+        id=report_id,
+        vehicle_id=vehicle_id,
+        timestamp=datetime.now(),
+        latitude=latitude,
+        longitude=longitude,
+        speed_kmph=speed_kmph,
+        model_version=inference_data.get("model_version"),
+        image_url=f"/static/uploads/{unique_filename}",
+    )
+    db.add(db_report)
+
+    # 5. Insert associated Detections
+    for det in inference_data.get("detections", []):
+        db_detection = models.Detection(
+            id=str(uuid.uuid4()),
+            report_id=report_id,
+            class_name=det["class"],
+            confidence=det["confidence"],
+            bbox=det["bbox"],
+            severity=det["severity"],
         )
         db.add(db_detection)
 
@@ -147,6 +261,8 @@ def get_map_geojson(db: Session = Depends(get_db)):
                 "timestamp": r.timestamp.isoformat(),
                 "image_url": r.image_url,
                 "max_severity": max_severity,
+                "speed_kmph": r.speed_kmph,
+                "model_version": r.model_version,
                 "detections": detections_list,
             },
         }
