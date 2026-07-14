@@ -169,6 +169,20 @@ def test_spatial_clustering(client):
                 }
             ],
         },
+        {
+            "report_id": "report-4",
+            "vehicle_id": "car-4",
+            "timestamp": "2026-07-14T20:03:00+05:30",
+            "gps": {"lat": 19.0760, "lon": 72.8777},  # exact coordinates
+            "detections": [
+                {
+                    "class": "crack",
+                    "confidence": 0.80,
+                    "bbox": [0, 0, 10, 10],
+                    "severity": "medium",
+                }
+            ],
+        },
     ]
 
     for p in reports_payloads:
@@ -180,13 +194,11 @@ def test_spatial_clustering(client):
     assert res.status_code == 200
     geojson = res.json()
 
-    # We expect 1 feature (the clustered issue) instead of 3 separate pins
-    features = [
-        f for f in geojson["features"] if f["properties"]["class_name"] == "pothole"
-    ]
-
-    # Since they are within 20m, they should be clustered into the same issue
+    # We expect exactly 1 feature (the clustered issue) instead of 4 separate pins
+    features = geojson["features"]
     assert len(features) == 1
+    
     issue_properties = features[0]["properties"]
-    assert issue_properties["detection_count"] == 3
+    assert issue_properties["detection_count"] == 4
+    assert issue_properties["class_name"] == "pothole"  # Highest confidence wins (0.95 pothole > 0.80 crack)
     assert issue_properties["max_severity"] == "high"  # Max of medium, high, low

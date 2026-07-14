@@ -25,10 +25,9 @@ def cluster_report_to_issue(db: Session, report: models.Report):
     primary_class = report.detections[0].class_name
     point_wkt = f"POINT({report.longitude} {report.latitude})"
 
-    # Find matching issue within 20m of the same class
+    # Find matching issue within 20m (regardless of class)
     matching_issue = (
         db.query(models.Issue)
-        .filter(models.Issue.class_name == primary_class)
         .filter(
             func.ST_DWithin(
                 cast(models.Issue.geom, Geography),
@@ -66,11 +65,28 @@ def cluster_report_to_issue(db: Session, report: models.Report):
         if report_priority > current_priority:
             matching_issue.severity = report_max_severity
 
-        # Update image_url if new report has high confidence
-        max_report_conf = (
-            max([d.confidence for d in report.detections]) if report.detections else 0.0
+        # Update class_name and image_url if new report has higher confidence
+        max_report_conf = 0.0
+        best_report_class = primary_class
+        for d in report.detections:
+            if d.confidence > max_report_conf:
+                max_report_conf = d.confidence
+                best_report_class = d.class_name
+
+        # Query highest confidence among existing reports of this issue
+        existing_max_conf = (
+            db.query(func.max(models.Detection.confidence))
+            .join(models.Report, models.Report.id == models.Detection.report_id)
+            .filter(models.Report.issue_id == matching_issue.id)
+            .scalar()
+            or 0.0
         )
-        if max_report_conf > 0.75 or not matching_issue.image_url:
+
+        if max_report_conf > existing_max_conf:
+            matching_issue.class_name = best_report_class
+            if report.image_url:
+                matching_issue.image_url = report.image_url
+        elif not matching_issue.image_url and report.image_url:
             matching_issue.image_url = report.image_url
     else:
         # Create a new issue
@@ -81,9 +97,17 @@ def cluster_report_to_issue(db: Session, report: models.Report):
         elif "medium" in report_severities:
             report_max_severity = "medium"
 
+        # Determine best class of new issue
+        max_report_conf = 0.0
+        best_report_class = primary_class
+        for d in report.detections:
+            if d.confidence > max_report_conf:
+                max_report_conf = d.confidence
+                best_report_class = d.class_name
+
         new_issue = models.Issue(
             id=str(uuid.uuid4()),
-            class_name=primary_class,
+            class_name=best_report_class,
             status="detected",
             severity=report_max_severity,
             image_url=report.image_url,
