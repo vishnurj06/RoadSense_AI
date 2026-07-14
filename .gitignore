@@ -1,8 +1,18 @@
 # Python virtual environments & caches
 backend/.venv/
+ai/venv/
 __pycache__/
 *.pyc
 .pytest_cache/
+
+# AI: model weights, datasets and generated frames. Too large for git, and
+# regenerable. Person B never needs these — he talks to the /infer service.
+ai/weights/
+ai/test_images/
+runs/
+*.pt
+*.mp4
+pothole-detection-3/
 
 # Node dependencies & Next.js builds
 frontend/node_modules/
