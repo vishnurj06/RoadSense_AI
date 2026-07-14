@@ -1,0 +1,18 @@
+{
+  "report_id": "c3a7281f-7b79-45d6-8b2b-88748c9df1fb",
+  "vehicle_id": "demo-vehicle-1",
+  "timestamp": "2026-07-14T20:05:00+05:30",
+  "gps": {
+    "lat": 19.0792,
+    "lon": 72.8821
+  },
+  "detections": [
+    {
+      "class": "pothole",
+      "confidence": 0.76,
+      "bbox": [150, 180, 290, 390],
+      "severity": "medium"
+    }
+  ],
+  "image_url": "/static/uploads/pothole_2.jpg"
+}

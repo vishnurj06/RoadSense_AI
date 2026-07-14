@@ -1,0 +1,53 @@
+name: RoadSense AI CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: roadsense
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-runs 5
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+        cache: 'pip'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install ruff pytest httpx fastapi uvicorn sqlalchemy psycopg2-binary pydantic python-multipart
+
+    - name: Run Ruff Lint check
+      run: ruff check backend/
+
+    - name: Run Ruff Format check
+      run: ruff format --check backend/
+
+    - name: Run Backend Tests
+      env:
+        DATABASE_URL: postgresql://postgres:postgres@localhost:5432/roadsense
+      run: |
+        cd backend
+        pytest test_api.py

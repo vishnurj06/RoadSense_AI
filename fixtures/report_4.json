@@ -1,0 +1,18 @@
+{
+  "report_id": "4020a6e0-d4cf-46d2-9721-a3f2faeeab28",
+  "vehicle_id": "demo-vehicle-2",
+  "timestamp": "2026-07-14T20:12:00+05:30",
+  "gps": {
+    "lat": 19.0715,
+    "lon": 72.8690
+  },
+  "detections": [
+    {
+      "class": "crack",
+      "confidence": 0.65,
+      "bbox": [50, 100, 480, 200],
+      "severity": "low"
+    }
+  ],
+  "image_url": "/static/uploads/crack_1.jpg"
+}
