@@ -1,7 +1,31 @@
 import uuid
-from sqlalchemy import Column, String, DateTime, Float, ForeignKey, JSON
+from datetime import datetime
+from sqlalchemy import Column, String, DateTime, Float, ForeignKey, JSON, Integer
 from sqlalchemy.orm import relationship
+from geoalchemy2 import Geometry
 from database import Base
+
+
+class Issue(Base):
+    __tablename__ = "issues"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    class_name = Column(String(50), nullable=False)  # 'pothole', 'crack' etc.
+    status = Column(
+        String(50), nullable=False, default="detected"
+    )  # 'detected', 'verified' etc.
+    severity = Column(String(20), nullable=False, default="low")  # 'low', 'medium', 'high'
+    image_url = Column(String(500), nullable=True)
+    latitude = Column(Float, nullable=False)
+    longitude = Column(Float, nullable=False)
+    geom = Column(Geometry(geometry_type="POINT", srid=4326), nullable=False)
+    detection_count = Column(Integer, nullable=False, default=1)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(
+        DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+    reports = relationship("Report", back_populates="issue")
 
 
 class Report(Base):
@@ -12,10 +36,13 @@ class Report(Base):
     timestamp = Column(DateTime, nullable=False)
     latitude = Column(Float, nullable=False)
     longitude = Column(Float, nullable=False)
+    geom = Column(Geometry(geometry_type="POINT", srid=4326), nullable=False)
     image_url = Column(String(500), nullable=True)
     speed_kmph = Column(Float, nullable=True)
     model_version = Column(String(100), nullable=True)
+    issue_id = Column(String(36), ForeignKey("issues.id", ondelete="SET NULL"), nullable=True)
 
+    issue = relationship("Issue", back_populates="reports")
     detections = relationship(
         "Detection", back_populates="report", cascade="all, delete-orphan"
     )

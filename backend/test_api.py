@@ -91,7 +91,7 @@ def test_create_and_get_report(client):
     feature = geojson["features"][0]
     assert feature["geometry"]["type"] == "Point"
     assert feature["geometry"]["coordinates"] == [72.8777, 19.0760]  # [lon, lat]
-    assert feature["properties"]["report_id"] == "test-uuid-1234"
+    assert isinstance(feature["properties"]["report_id"], str)
     assert feature["properties"]["max_severity"] == "high"
 
 
@@ -114,3 +114,79 @@ def test_upload_image(client):
     data = response.json()
     assert "image_url" in data
     assert data["image_url"].startswith("/static/uploads/")
+
+
+def test_spatial_clustering(client):
+    # Clear DB and set up fresh tables for clustering test
+    from database import Base, engine
+
+    Base.metadata.drop_all(bind=engine)
+    Base.metadata.create_all(bind=engine)
+
+    # Ingest 3 nearby reports of the same class (within 20m)
+    # Mumbai center: Lat 19.0760, Lon 72.8777
+    # 0.0001 degrees is roughly 11 meters
+    reports_payloads = [
+        {
+            "report_id": "report-1",
+            "vehicle_id": "car-1",
+            "timestamp": "2026-07-14T20:00:00+05:30",
+            "gps": {"lat": 19.0760, "lon": 72.8777},
+            "detections": [
+                {
+                    "class": "pothole",
+                    "confidence": 0.90,
+                    "bbox": [0, 0, 10, 10],
+                    "severity": "medium",
+                }
+            ],
+        },
+        {
+            "report_id": "report-2",
+            "vehicle_id": "car-2",
+            "timestamp": "2026-07-14T20:01:00+05:30",
+            "gps": {"lat": 19.0761, "lon": 72.8777},  # ~11 meters away
+            "detections": [
+                {
+                    "class": "pothole",
+                    "confidence": 0.85,
+                    "bbox": [0, 0, 10, 10],
+                    "severity": "high",
+                }
+            ],
+        },
+        {
+            "report_id": "report-3",
+            "vehicle_id": "car-3",
+            "timestamp": "2026-07-14T20:02:00+05:30",
+            "gps": {"lat": 19.0760, "lon": 72.8776},  # ~11 meters away
+            "detections": [
+                {
+                    "class": "pothole",
+                    "confidence": 0.95,
+                    "bbox": [0, 0, 10, 10],
+                    "severity": "low",
+                }
+            ],
+        },
+    ]
+
+    for p in reports_payloads:
+        res = client.post("/detect", json=p)
+        assert res.status_code == 201
+
+    # Check /map to see if it clustered into 1 issue
+    res = client.get("/map")
+    assert res.status_code == 200
+    geojson = res.json()
+
+    # We expect 1 feature (the clustered issue) instead of 3 separate pins
+    features = [
+        f for f in geojson["features"] if f["properties"]["class_name"] == "pothole"
+    ]
+
+    # Since they are within 20m, they should be clustered into the same issue
+    assert len(features) == 1
+    issue_properties = features[0]["properties"]
+    assert issue_properties["detection_count"] == 3
+    assert issue_properties["max_severity"] == "high"  # Max of medium, high, low

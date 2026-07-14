@@ -17,7 +17,7 @@ const DefaultIcon = L.icon({
 L.Marker.prototype.options.icon = DefaultIcon;
 
 // Helper to generate dynamic colored pin SVGs
-const createMarkerIcon = (severity) => {
+const createMarkerIcon = (severity, detectionCount = 1) => {
   let color = "#22c55e"; // Green for low
   if (severity === "high") {
     color = "#ef4444"; // Red
@@ -25,18 +25,27 @@ const createMarkerIcon = (severity) => {
     color = "#f97316"; // Orange
   }
 
+  const badgeSvg =
+    detectionCount > 1
+      ? `
+    <circle cx="18" cy="6" r="5.5" fill="#3b82f6" stroke="#0f172a" stroke-width="1"/>
+    <text x="18" y="8" font-size="6.5" font-family="sans-serif" font-weight="bold" fill="white" text-anchor="middle">${detectionCount}</text>
+  `
+      : "";
+
   const svgTemplate = `
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="${color}" width="34" height="34">
-      <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="38" height="38">
+      <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z" fill="${color}"/>
+      ${badgeSvg}
     </svg>
   `;
 
   return L.divIcon({
     html: svgTemplate,
     className: "custom-marker-icon",
-    iconSize: [34, 34],
-    iconAnchor: [17, 34],
-    popupAnchor: [0, -34],
+    iconSize: [38, 38],
+    iconAnchor: [19, 38],
+    popupAnchor: [0, -38],
   });
 };
 
@@ -76,7 +85,7 @@ export default function MapComponent({ reports }) {
             <Marker
               key={report.id}
               position={[report.latitude, report.longitude]}
-              icon={createMarkerIcon(maxSeverity)}
+              icon={createMarkerIcon(maxSeverity, report.detection_count)}
             >
               <Popup className="roadsense-popup">
                 <div className="flex flex-col w-64 p-1 font-sans text-slate-100">

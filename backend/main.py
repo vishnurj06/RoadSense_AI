@@ -6,8 +6,9 @@ import httpx
 from fastapi import FastAPI, Depends, HTTPException, File, UploadFile, status, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-
 from sqlalchemy.orm import Session
+from sqlalchemy import func, cast
+from geoalchemy2 import Geography
 
 import models
 import schemas
@@ -16,11 +17,92 @@ from database import engine, get_db
 INFERENCE_URL = os.getenv("INFERENCE_URL", "http://localhost:8001")
 
 
-# Initialize database tables
-try:
-    models.Base.metadata.create_all(bind=engine)
-except Exception as e:
-    print(f"Warning: Database tables could not be initialized automatically: {e}")
+# Helper function for spatial clustering
+def cluster_report_to_issue(db: Session, report: models.Report):
+    if not report.detections:
+        return
+
+    primary_class = report.detections[0].class_name
+    point_wkt = f"POINT({report.longitude} {report.latitude})"
+
+    # Find matching issue within 20m of the same class
+    matching_issue = (
+        db.query(models.Issue)
+        .filter(models.Issue.class_name == primary_class)
+        .filter(
+            func.ST_DWithin(
+                cast(models.Issue.geom, Geography),
+                cast(func.ST_GeomFromText(point_wkt, 4326), Geography),
+                20.0,
+            )
+        )
+        .order_by(
+            func.ST_Distance(
+                cast(models.Issue.geom, Geography),
+                cast(func.ST_GeomFromText(point_wkt, 4326), Geography),
+            )
+        )
+        .first()
+    )
+
+    if matching_issue:
+        # Associate report with the existing issue
+        report.issue_id = matching_issue.id
+        matching_issue.detection_count += 1
+        matching_issue.updated_at = datetime.utcnow()
+
+        # Update severity to maximum
+        severity_priority = {"low": 1, "medium": 2, "high": 3}
+        current_priority = severity_priority.get(matching_issue.severity, 0)
+
+        report_severities = [d.severity for d in report.detections]
+        report_max_severity = "low"
+        if "high" in report_severities:
+            report_max_severity = "high"
+        elif "medium" in report_severities:
+            report_max_severity = "medium"
+
+        report_priority = severity_priority.get(report_max_severity, 0)
+        if report_priority > current_priority:
+            matching_issue.severity = report_max_severity
+
+        # Update image_url if new report has high confidence
+        max_report_conf = (
+            max([d.confidence for d in report.detections]) if report.detections else 0.0
+        )
+        if max_report_conf > 0.75 or not matching_issue.image_url:
+            matching_issue.image_url = report.image_url
+    else:
+        # Create a new issue
+        report_severities = [d.severity for d in report.detections]
+        report_max_severity = "low"
+        if "high" in report_severities:
+            report_max_severity = "high"
+        elif "medium" in report_severities:
+            report_max_severity = "medium"
+
+        new_issue = models.Issue(
+            id=str(uuid.uuid4()),
+            class_name=primary_class,
+            status="detected",
+            severity=report_max_severity,
+            image_url=report.image_url,
+            latitude=report.latitude,
+            longitude=report.longitude,
+            geom=f"POINT({report.longitude} {report.latitude})",
+            detection_count=1,
+            created_at=report.timestamp,
+            updated_at=report.timestamp,
+        )
+        db.add(new_issue)
+        db.flush()
+        report.issue_id = new_issue.id
+
+
+# Note: We commented out models.Base.metadata.create_all(bind=engine)
+# to ensure we rely purely on Alembic migrations in production/docker.
+# But for tests, we will keep setup_db dropping and recreating them.
+# The endpoint startup won't create tables automatically now.
 
 app = FastAPI(title="RoadSense AI API", version="1.0.0")
 
@@ -75,6 +157,7 @@ def create_report(payload: schemas.ReportCreate, db: Session = Depends(get_db)):
         timestamp=payload.timestamp,
         latitude=payload.gps.lat,
         longitude=payload.gps.lon,
+        geom=f"POINT({payload.gps.lon} {payload.gps.lat})",
         image_url=payload.image_url,
         speed_kmph=payload.speed_kmph,
         model_version=payload.model_version,
@@ -94,6 +177,8 @@ def create_report(payload: schemas.ReportCreate, db: Session = Depends(get_db)):
         db.add(db_detection)
 
     try:
+        db.flush()
+        cluster_report_to_issue(db, db_report)
         db.commit()
         db.refresh(db_report)
     except Exception as e:
@@ -184,6 +269,7 @@ async def detect_image(
         timestamp=datetime.now(),
         latitude=latitude,
         longitude=longitude,
+        geom=f"POINT({longitude} {latitude})",
         speed_kmph=speed_kmph,
         model_version=inference_data.get("model_version"),
         image_url=f"/static/uploads/{unique_filename}",
@@ -203,6 +289,8 @@ async def detect_image(
         db.add(db_detection)
 
     try:
+        db.flush()
+        cluster_report_to_issue(db, db_report)
         db.commit()
         db.refresh(db_report)
     except Exception as e:
@@ -223,52 +311,73 @@ def get_reports(db: Session = Depends(get_db)):
 
 @app.get("/map")
 def get_map_geojson(db: Session = Depends(get_db)):
-    reports = db.query(models.Report).all()
+    issues = db.query(models.Issue).all()
 
     features = []
-    for r in reports:
-        # Get severity levels of all detections in this report
-        severities = [d.severity for d in r.detections]
-
-        # Determine maximum severity (High > Medium > Low)
-        max_severity = "low"
-        if "high" in severities:
-            max_severity = "high"
-        elif "medium" in severities:
-            max_severity = "medium"
+    for issue in issues:
+        # Get detections from the latest associated report to display
+        latest_report = (
+            db.query(models.Report)
+            .filter(models.Report.issue_id == issue.id)
+            .order_by(models.Report.timestamp.desc())
+            .first()
+        )
 
         detections_list = []
-        for d in r.detections:
-            detections_list.append(
-                {
-                    "id": d.id,
-                    "class": d.class_name,
-                    "confidence": d.confidence,
-                    "bbox": d.bbox,
-                    "severity": d.severity,
-                }
-            )
+        if latest_report:
+            for d in latest_report.detections:
+                detections_list.append(
+                    {
+                        "id": d.id,
+                        "class": d.class_name,
+                        "confidence": d.confidence,
+                        "bbox": d.bbox,
+                        "severity": d.severity,
+                    }
+                )
 
         feature = {
             "type": "Feature",
             "geometry": {
                 "type": "Point",
-                "coordinates": [r.longitude, r.latitude],  # GeoJSON is [lon, lat]
+                "coordinates": [issue.longitude, issue.latitude],  # GeoJSON is [lon, lat]
             },
             "properties": {
-                "report_id": r.id,
-                "vehicle_id": r.vehicle_id,
-                "timestamp": r.timestamp.isoformat(),
-                "image_url": r.image_url,
-                "max_severity": max_severity,
-                "speed_kmph": r.speed_kmph,
-                "model_version": r.model_version,
+                "report_id": issue.id,  # Alias for compatibility with map component
+                "issue_id": issue.id,
+                "class_name": issue.class_name,
+                "status": issue.status,
+                "max_severity": issue.severity,
+                "image_url": issue.image_url,
+                "detection_count": issue.detection_count,
+                "timestamp": issue.updated_at.isoformat(),
+                "vehicle_id": f"Clustered ({issue.detection_count} reports)",
                 "detections": detections_list,
             },
         }
         features.append(feature)
 
     return {"type": "FeatureCollection", "features": features}
+
+
+@app.post("/verify")
+def verify_reports(db: Session = Depends(get_db)):
+    unclustered_reports = (
+        db.query(models.Report).filter(models.Report.issue_id == None).all()
+    )
+    count = 0
+    for r in unclustered_reports:
+        cluster_report_to_issue(db, r)
+        count += 1
+    try:
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Verification clustering failed: {e}",
+        )
+    return {"message": f"Clustered {count} reports successfully."}
 
 
 @app.post("/upload")
