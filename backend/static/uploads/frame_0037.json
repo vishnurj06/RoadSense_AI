@@ -1,11 +1,23 @@
 {
-  "report_id": "f83dfe0a-cce8-4411-a79e-ed1e3e54635e",
+  "report_id": "b75d883b-b278-48c0-ad44-6e330291252d",
   "vehicle_id": "demo-vehicle-1",
-  "timestamp": "2026-07-14T16:15:11.584561+00:00",
+  "timestamp": "2026-07-14T16:39:13.696094+00:00",
   "gps": {
-    "lat": 19.069082586450858,
-    "lon": 72.870435527722
+    "lat": 19.06789969790184,
+    "lon": 72.87124148368453
   },
-  "detections": [],
+  "detections": [
+    {
+      "class": "Pothole",
+      "confidence": 0.725,
+      "bbox": [
+        2.0,
+        3.0,
+        1919.0,
+        988.0
+      ],
+      "severity": "high"
+    }
+  ],
   "image_url": "/static/uploads/frame_0037.jpg"
 }

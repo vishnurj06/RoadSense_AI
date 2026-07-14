@@ -1,10 +1,10 @@
 {
-  "report_id": "fd75e0b6-7640-4a61-92a4-82f3b137d63e",
+  "report_id": "597e2348-5a41-4539-aa00-ffce2108fc83",
   "vehicle_id": "demo-vehicle-1",
-  "timestamp": "2026-07-14T16:15:12.745324+00:00",
+  "timestamp": "2026-07-14T16:39:55.197744+00:00",
   "gps": {
-    "lat": 19.083731206742158,
-    "lon": 72.88222531540376
+    "lat": 19.08423377158433,
+    "lon": 72.88173423198955
   },
   "detections": [],
   "image_url": "/static/uploads/frame_0054.jpg"

@@ -1,23 +1,11 @@
 {
-  "report_id": "cfb94dfd-987f-4f5d-b48e-08a702f8057b",
+  "report_id": "dc198a6d-1735-42f2-89fc-2cbebceca42f",
   "vehicle_id": "demo-vehicle-1",
-  "timestamp": "2026-07-14T16:15:10.555599+00:00",
+  "timestamp": "2026-07-14T16:38:38.119340+00:00",
   "gps": {
-    "lat": 19.07089373416469,
-    "lon": 72.8835171846024
+    "lat": 19.078470099321812,
+    "lon": 72.88330516697648
   },
-  "detections": [
-    {
-      "class": "car",
-      "confidence": 0.401,
-      "bbox": [
-        879.0,
-        510.2,
-        924.7,
-        537.1
-      ],
-      "severity": "low"
-    }
-  ],
+  "detections": [],
   "image_url": "/static/uploads/frame_0022.jpg"
 }
