@@ -174,7 +174,7 @@ def create_report(payload: schemas.ReportCreate, db: Session = Depends(get_db)):
             bbox=det.bbox,
             severity=det.severity,
         )
-        db.add(db_detection)
+        db_report.detections.append(db_detection)
 
     try:
         db.flush()
@@ -286,7 +286,7 @@ async def detect_image(
             bbox=det["bbox"],
             severity=det["severity"],
         )
-        db.add(db_detection)
+        db_report.detections.append(db_detection)
 
     try:
         db.flush()
@@ -352,6 +352,8 @@ def get_map_geojson(db: Session = Depends(get_db)):
                 "detection_count": issue.detection_count,
                 "timestamp": issue.updated_at.isoformat(),
                 "vehicle_id": f"Clustered ({issue.detection_count} reports)",
+                "speed_kmph": latest_report.speed_kmph if latest_report else None,
+                "model_version": latest_report.model_version if latest_report else None,
                 "detections": detections_list,
             },
         }

@@ -33,6 +33,7 @@ const BACKEND_URL = "http://localhost:8000";
 
 export default function Dashboard() {
   const [reports, setReports] = useState([]);
+  const [mapIssues, setMapIssues] = useState([]);
   const [analytics, setAnalytics] = useState({
     total_reports: 0,
     total_detections: 0,
@@ -65,20 +66,37 @@ export default function Dashboard() {
       setLoading(true);
       setError(null);
       
-      const [reportsRes, analyticsRes] = await Promise.all([
+      const [reportsRes, analyticsRes, mapRes] = await Promise.all([
         fetch(`${BACKEND_URL}/reports`),
-        fetch(`${BACKEND_URL}/analytics`)
+        fetch(`${BACKEND_URL}/analytics`),
+        fetch(`${BACKEND_URL}/map`)
       ]);
 
-      if (!reportsRes.ok || !analyticsRes.ok) {
+      if (!reportsRes.ok || !analyticsRes.ok || !mapRes.ok) {
         throw new Error("Failed to fetch dashboard data from backend server.");
       }
 
       const reportsData = await reportsRes.json();
       const analyticsData = await analyticsRes.json();
+      const mapGeoJson = await mapRes.json();
 
       setReports(reportsData);
       setAnalytics(analyticsData);
+
+      // Flatten GeoJSON features to issue objects that MapComponent renders directly
+      const issues = mapGeoJson.features.map(f => ({
+        id: f.properties.report_id,
+        latitude: f.geometry.coordinates[1],
+        longitude: f.geometry.coordinates[0],
+        vehicle_id: f.properties.vehicle_id,
+        timestamp: f.properties.timestamp,
+        image_url: f.properties.image_url,
+        detection_count: f.properties.detection_count,
+        detections: f.properties.detections,
+        speed_kmph: f.properties.speed_kmph,
+        model_version: f.properties.model_version
+      }));
+      setMapIssues(issues);
     } catch (err) {
       console.error(err);
       setError("Backend connection offline. Make sure the FastAPI server is running on http://localhost:8000.");
@@ -105,6 +123,25 @@ export default function Dashboard() {
     // 2. Check class filter
     if (classFilter !== "all") {
       const classes = report.detections?.map((d) => d.class.toLowerCase()) || [];
+      if (!classes.includes(classFilter)) return false;
+    }
+
+    return true;
+  });
+
+  const filteredIssues = mapIssues.filter((issue) => {
+    // 1. Get max severity
+    const severities = issue.detections?.map((d) => d.severity.toLowerCase()) || [];
+    let maxSeverity = "low";
+    if (severities.includes("high")) maxSeverity = "high";
+    else if (severities.includes("medium")) maxSeverity = "medium";
+
+    // Check severity toggle
+    if (!severityFilter[maxSeverity]) return false;
+
+    // 2. Check class filter
+    if (classFilter !== "all") {
+      const classes = issue.detections?.map((d) => d.class.toLowerCase()) || [];
       if (!classes.includes(classFilter)) return false;
     }
 
@@ -399,7 +436,7 @@ export default function Dashboard() {
 
         {/* Right Side: Map Container */}
         <div className="flex-1 h-full min-w-0 relative">
-          <MapComponent reports={filteredReports.filter(r => r.detections && r.detections.length > 0)} />
+          <MapComponent reports={filteredIssues} />
         </div>
 
       </div>
