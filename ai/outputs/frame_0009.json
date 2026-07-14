@@ -1,0 +1,11 @@
+{
+  "report_id": "42992425-3c16-4c97-b75c-c18a60b180fe",
+  "vehicle_id": "demo-vehicle-1",
+  "timestamp": "2026-07-14T16:15:09.657307+00:00",
+  "gps": {
+    "lat": 19.07833114133046,
+    "lon": 72.8833645121738
+  },
+  "detections": [],
+  "image_url": "/static/uploads/frame_0009.jpg"
+}

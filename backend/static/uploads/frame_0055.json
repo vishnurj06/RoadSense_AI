@@ -1,0 +1,23 @@
+{
+  "report_id": "3048b88d-9b47-4159-b597-c9dc209d345b",
+  "vehicle_id": "demo-vehicle-1",
+  "timestamp": "2026-07-14T16:15:12.814992+00:00",
+  "gps": {
+    "lat": 19.08031383995255,
+    "lon": 72.87596113020014
+  },
+  "detections": [
+    {
+      "class": "train",
+      "confidence": 0.272,
+      "bbox": [
+        16.1,
+        491.7,
+        1912.9,
+        1058.1
+      ],
+      "severity": "high"
+    }
+  ],
+  "image_url": "/static/uploads/frame_0055.jpg"
+}

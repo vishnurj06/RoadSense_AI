@@ -1,0 +1,23 @@
+{
+  "report_id": "84fcbcb3-7a12-4475-963a-01b5c3a98c98",
+  "vehicle_id": "demo-vehicle-1",
+  "timestamp": "2026-07-14T16:15:11.785039+00:00",
+  "gps": {
+    "lat": 19.084775096178856,
+    "lon": 72.879660159604
+  },
+  "detections": [
+    {
+      "class": "person",
+      "confidence": 0.25,
+      "bbox": [
+        655.0,
+        466.0,
+        687.9,
+        518.3
+      ],
+      "severity": "low"
+    }
+  ],
+  "image_url": "/static/uploads/frame_0040.jpg"
+}
