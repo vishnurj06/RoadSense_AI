@@ -1,20 +1,20 @@
-# RoadSense AI — Continuous Memory and Context Log
+# RoadSense AI — Continuous Memory and Context Log (Phase 2 - MVP)
 
-This file tracks the project state, architectural decisions, completed tasks, and verification statuses for the RoadSense AI Platform (Backend & Frontend) sprint.
+This file tracks the project state, architectural decisions, completed tasks, and verification statuses for the RoadSense AI Platform (Backend & Frontend) Phase 2 MVP.
 
 ## Project Metadata
 - **Project Name:** RoadSense AI (Platform)
 - **Role:** Person B (Backend & Frontend Platform Owner)
-- **Sprint Duration:** 2 Days (Local Development focus)
-- **Tech Stack:** FastAPI, Next.js, Tailwind CSS, Leaflet (OpenStreetMap), PostgreSQL (Docker)
+- **Sprint Duration:** Phase 2 (Local Development focus)
+- **Tech Stack:** FastAPI, Next.js, Tailwind CSS, Leaflet (OpenStreetMap), PostgreSQL + PostGIS (Docker)
 
 ---
 
 ## 1. Architectural Decisions
 
 ### A. Image Storage & Handling
-- **Decision:** Use a shared relative folder (`backend/static/uploads/`). The AI pipeline script will write images directly into this directory, and the FastAPI backend will serve them statically under `/static/uploads/`.
-- **Rationale:** Simplifies local configuration for a 2-day build since both frontend, backend, and AI pipeline run on the same machine.
+- **Decision:** Use a shared relative folder (`backend/static/uploads/`). The AI pipeline / image upload endpoint will write images directly into this directory, and the FastAPI backend will serve them statically under `/static/uploads/`.
+- **Rationale:** Simplifies local configuration since both frontend, backend, and AI service/stub run locally.
 
 ### B. Next.js Architecture
 - **Decision:** Use Next.js App Router (JavaScript version) with Tailwind CSS. Disable SSR for the Leaflet MapComponent dynamically using `next/dynamic` to avoid `window is not defined` hydration errors.
@@ -22,37 +22,35 @@ This file tracks the project state, architectural decisions, completed tasks, an
 ### C. CI/CD Linting & Formatting
 - **Decision:** Use `ruff` to perform rapid lint checks and code formatting verification in our GitHub Actions pipeline, avoiding slow multiple package dependencies.
 
-### D. Database Schema & Mapping
-- **Decision:** Use plain PostgreSQL running in Docker (container name: `roadsense-db`). Skip PostGIS setup to avoid setup overhead during the 2-day sprint. Store GPS coordinates as separate `latitude` and `longitude` numeric columns.
-- **Rationale:** Sufficient for faking GPS jitter, storing/retrieving reports, and generating GeoJSON on the `/map` endpoint. Simple distance duplicate checking can be stubbed in python if needed.
+### D. Database Schema & Mapping (PostGIS Upgrade)
+- **Decision:** Upgrade plain PostgreSQL running in Docker (container name: `roadsense-db`) to PostGIS using the `postgis/postgis:15-3.4` image. Store GPS coordinates in a spatial geometry column `geometry(Point, 4326)` with a GiST index on the `reports` table. Use Alembic for database migrations.
+- **Rationale:** Enables real spatial clustering (`ST_DWithin`) to support duplicate report verification (<20m radius) on the backend.
 
-### E. AI Pipeline Integration
-- **Decision:** Use the Roboflow Hosted API via cloud GPUs for the AI pipeline inference.
-- **Rationale:** Offloads heavy GPU compute from the local machine while guaranteeing high-confidence, real-time detections for the live dashboard demo.
+### E. AI Inference Integration (Contract v2)
+- **Decision:** Introduce a decoupled, stateless AI inference HTTP service exposing `POST /infer` (multipart/form-data) on port 8001. Person B implements a local stub service `backend/stub_infer.py` to allow parallel, unblocked development. Switching between the stub and the real AI service is done via the `INFERENCE_URL` environment variable.
+- **Rationale:** Prevents runtime coupling and blocking dependencies between Person A (AI) and Person B (Platform).
 
 ---
 
-## 2. Sprint Progress Summary
+## 2. Phase 2 Progress Summary
 
-| Phase / Hour | Task | Status | Notes |
+| Phase / Task | Task Description | Status | Notes |
 |---|---|---|---|
-| **Day 1: Hour 0-0.5** | Initialize workspace, establish JSON contract | Completed | Created `gemini.md`, `task.md`, Docker compose, and `/fixtures` mock data. |
-| **Day 1: Hour 0.5-4** | FastAPI scaffold, Docker Postgres, Next.js Leaflet scaffold | Completed | Database models, schemas, and endpoints (/detect, /reports, /map, /upload, /analytics) are fully functional. Next.js Leaflet map pins are active. |
-| **Day 1: Hour 4-4.5** | Integration Sync with Person A | Completed | End-to-end integration successful. API receives real detections and outputs them. |
-| **Day 1: Hour 4.5-8** | Polish Map Popups, filters, upload endpoint, CI workflow | Completed | Implemented custom severity pin SVGs, detailed popups, filters, upload button, and GitHub Actions workflow (.github/workflows/ci.yml). |
-| **Day 2: Hour 0-3** | Add report list table, loading states | Completed | Sidebar report log table, live stats, filters, and loading states are integrated in page.js. |
-| **Day 2: Hour 3-3.5** | End-to-end dry run on video batch | Completed | Ingested 57 frames processed via Roboflow Hosted API. Map and log table loaded them flawlessly. |
-| **Day 2: Hour 3.5-6** | Bug-fixing buffer | Completed | Fixed Windows relative path issues in ingest scripts and database isolation in tests. |
-| **Day 2: Hour 6-8** | Demo narrative & rehearsal | Completed | Rehearsal finished. Platform is stable and ready. |
+| **B-0** | Build the stub inference service (`backend/stub_infer.py`) | Planned | Port 8001, serves `POST /infer` with fake detections. |
+| **B-1** | Real upload flow (`POST /detect-image` & Next.js integration) | Planned | Saves image, calls `INFERENCE_URL`, saves detections. |
+| **B-2** | PostGIS + real duplicate verification (`POST /verify`) | Planned | `ST_DWithin` spatial clustering into issues table. |
+| **B-3** | Repair workflow (`POST /repair` + status updates + audit log) | Planned | Issue status transitions & audit logging. |
+| **B-4** | Auth & roles (JWT, bcrypt/argon2, role-based dependencies) | Planned | Protect mutating endpoints, login/register views. |
+| **B-5** | Dashboards (Authority, Fleet, Admin views & charts) | Planned | Analytics feeds, user/model management. |
+| **B-6** | Production hardening (S3/MinIO, Redis, marker local pinning) | Planned | Caching `/map`, pagination, pagination on `/reports`. |
 
 ---
 
 ## 3. Active Technical Notes
 - **Local DB Credentials:** Host: `localhost`, Port: `5432`, DB: `roadsense`, User: `postgres`, Pass: `postgres`
-- **FastAPI Port:** `http://localhost:8000` (Running in background, Task ID: `task-126`)
-- **Next.js Port:** `http://localhost:3000` (Running in background, Task ID: `task-132`)
+- **FastAPI Port:** `http://localhost:8000`
+- **Stub Inference Port:** `http://localhost:8001`
+- **Next.js Port:** `http://localhost:3000`
 
 ## 4. Verification & Testing Status
-- **Automated Tests:** `backend/test_api.py` contains 4 pytest tests covering database inserts, GET endpoints, GeoJSON formatting, and file uploads. Status: **PASSING (4/4)**.
-- **Lint Check:** Ruff lint checks. Status: **PASSING (All checks passed)**.
-- **Format Check:** Ruff format checks. Status: **PASSING (6 files formatted)**.
+- **Automated Tests:** `backend/test_api.py` contains tests covering base endpoint behaviors. Status: **PASSING (Phase 1 baseline)**.

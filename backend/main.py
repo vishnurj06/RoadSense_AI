@@ -10,6 +10,9 @@ import models
 import schemas
 from database import engine, get_db
 
+INFERENCE_URL = os.getenv("INFERENCE_URL", "http://localhost:8001")
+
+
 # Initialize database tables
 try:
     models.Base.metadata.create_all(bind=engine)
