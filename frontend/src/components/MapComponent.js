@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
+import { useRouter } from "next/navigation";
 import { MapContainer, TileLayer, Marker, Popup } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
@@ -84,6 +85,7 @@ const getStatusStyle = (status) => {
 };
 
 function IssuePopupContent({ report, onRefresh }) {
+  const router = useRouter();
   const currentStatus = report.status || "detected";
   const validNextStates = statusTransitionMap[currentStatus.toLowerCase()] || [];
 
@@ -115,7 +117,7 @@ function IssuePopupContent({ report, onRefresh }) {
 
       if (res.status === 401) {
         localStorage.removeItem("user");
-        window.location.href = "/login";
+        router.push("/login");
         return;
       }
 
@@ -155,6 +157,7 @@ function IssuePopupContent({ report, onRefresh }) {
     <div className="flex flex-col w-64 p-1 font-sans text-slate-100">
       {imageUrl ? (
         <div className="w-full h-32 rounded-lg overflow-hidden mb-2 bg-slate-900 border border-slate-700 relative">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src={imageUrl}
             alt="Detection Thumbnail"

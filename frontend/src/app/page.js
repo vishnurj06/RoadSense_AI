@@ -222,8 +222,10 @@ export default function Dashboard() {
       return;
     }
     const parsed = JSON.parse(savedUser);
+    // eslint-disable-next-line react/no-direct-mutation-state
     setUser(parsed);
     fetchData(parsed);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Filter reports according to severity filter and class filter
