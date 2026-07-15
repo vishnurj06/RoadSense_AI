@@ -1,5 +1,5 @@
 import os
-from contextlib import asynccontextmanager
+import sys
 import uuid
 from datetime import datetime
 from typing import List, Optional
@@ -17,15 +17,55 @@ from fastapi import (
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
-from sqlalchemy import func, cast
+from sqlalchemy import func, cast, inspect
 from geoalchemy2 import Geography
 
 import models
 import schemas
-from database import get_db, SessionLocal
+from database import get_db, SessionLocal, engine
 import auth
 
 INFERENCE_URL = os.getenv("INFERENCE_URL", "http://localhost:8001")
+
+
+def seed_users():
+    # Skip seeding during automated testing
+    if "pytest" in sys.modules or os.getenv("TESTING") == "1":
+        return
+
+    db = SessionLocal()
+    try:
+        inspector = inspect(engine)
+        if inspector.has_table("users"):
+            user_count = db.query(models.User).count()
+            if user_count == 0:
+                print("Seeding default users...", flush=True)
+                admin_user = models.User(
+                    username="admin",
+                    hashed_password=auth.hash_password("password"),
+                    role="admin",
+                )
+                officer_user = models.User(
+                    username="officer",
+                    hashed_password=auth.hash_password("password"),
+                    role="authority",
+                )
+                driver_user = models.User(
+                    username="driver",
+                    hashed_password=auth.hash_password("password"),
+                    role="fleet",
+                )
+                db.add_all([admin_user, officer_user, driver_user])
+                db.commit()
+                print("Default users seeded successfully.", flush=True)
+    except Exception as e:
+        print(f"Error seeding default users: {e}", flush=True)
+        db.rollback()
+    finally:
+        db.close()
+
+
+seed_users()
 
 
 # Helper function for spatial clustering
@@ -140,41 +180,7 @@ def cluster_report_to_issue(db: Session, report: models.Report):
 # The endpoint startup won't create tables automatically now.
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # Startup: seed default users
-    db = SessionLocal()
-    try:
-        user_count = db.query(models.User).count()
-        if user_count == 0:
-            print("Seeding default users...")
-            admin_user = models.User(
-                username="admin",
-                hashed_password=auth.hash_password("password"),
-                role="admin",
-            )
-            officer_user = models.User(
-                username="officer",
-                hashed_password=auth.hash_password("password"),
-                role="authority",
-            )
-            driver_user = models.User(
-                username="driver",
-                hashed_password=auth.hash_password("password"),
-                role="fleet",
-            )
-            db.add_all([admin_user, officer_user, driver_user])
-            db.commit()
-            print("Default users seeded successfully.")
-    except Exception as e:
-        print(f"Error seeding default users: {e}")
-        db.rollback()
-    finally:
-        db.close()
-    yield
-
-
-app = FastAPI(title="RoadSense AI API", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="RoadSense AI API", version="1.0.0")
 
 # Enable CORS for the Next.js frontend
 app.add_middleware(
