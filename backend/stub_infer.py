@@ -15,7 +15,6 @@ async def health():
     }
 
 
-
 @app.post("/infer", status_code=status.HTTP_200_OK)
 async def infer(file: UploadFile = File(...), conf: float = Form(0.5)):
     # 1. Validate image format

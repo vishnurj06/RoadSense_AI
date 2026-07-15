@@ -197,8 +197,10 @@ def test_spatial_clustering(client):
     # We expect exactly 1 feature (the clustered issue) instead of 4 separate pins
     features = geojson["features"]
     assert len(features) == 1
-    
+
     issue_properties = features[0]["properties"]
     assert issue_properties["detection_count"] == 4
-    assert issue_properties["class_name"] == "pothole"  # Highest confidence wins (0.95 pothole > 0.80 crack)
+    assert (
+        issue_properties["class_name"] == "pothole"
+    )  # Highest confidence wins (0.95 pothole > 0.80 crack)
     assert issue_properties["max_severity"] == "high"  # Max of medium, high, low
