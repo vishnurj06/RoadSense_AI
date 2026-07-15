@@ -70,6 +70,9 @@ export default function Dashboard() {
   const [adminUsers, setAdminUsers] = useState([]);
   const [systemHealth, setSystemHealth] = useState(null);
 
+  const [reportPage, setReportPage] = useState(1);
+  const [totalReports, setTotalReports] = useState(0);
+
   const showToast = (message, type = "info") => {
     setToast({ message, type });
     setTimeout(() => {
@@ -87,15 +90,16 @@ export default function Dashboard() {
   const [classFilter, setClassFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
 
-  const fetchData = async (currentUser = null) => {
+  const fetchData = async (currentUser = null, targetPage = null) => {
     try {
       setLoading(true);
       setError(null);
 
       const activeUser = currentUser || user;
+      const pageToFetch = targetPage !== null ? targetPage : reportPage;
       
       const [reportsRes, analyticsRes, mapRes] = await Promise.all([
-        fetch(`${BACKEND_URL}/reports`, { credentials: "include" }),
+        fetch(`${BACKEND_URL}/reports?page=${pageToFetch}&limit=10`, { credentials: "include" }),
         fetch(`${BACKEND_URL}/analytics`, { credentials: "include" }),
         fetch(`${BACKEND_URL}/map`, { credentials: "include" })
       ]);
@@ -114,7 +118,11 @@ export default function Dashboard() {
       const analyticsData = await analyticsRes.json();
       const mapGeoJson = await mapRes.json();
 
-      setReports(reportsData);
+      setReports(reportsData.reports || []);
+      setTotalReports(reportsData.total || 0);
+      if (targetPage !== null) {
+        setReportPage(targetPage);
+      }
       setAnalytics(analyticsData);
 
       // Flatten GeoJSON features to issue objects that MapComponent renders directly
@@ -438,7 +446,7 @@ export default function Dashboard() {
       <div className="flex items-center justify-between mb-3 shrink-0">
         <div className="flex items-center gap-2 text-xs font-bold text-slate-400">
           <FileSpreadsheet className="h-4 w-4" />
-          <span>REPORT LOGS ({filteredReports.length})</span>
+          <span>REPORT LOGS ({totalReports} total)</span>
         </div>
       </div>
 
@@ -523,6 +531,29 @@ export default function Dashboard() {
           })
         )}
       </div>
+
+      {/* Pagination Footer */}
+      {totalReports > 10 && (
+        <div className="flex items-center justify-between border-t border-slate-800/80 pt-3 mt-3 shrink-0">
+          <button
+            onClick={() => fetchData(null, reportPage - 1)}
+            disabled={reportPage === 1}
+            className="px-2.5 py-1 text-[10px] font-bold bg-slate-800 hover:bg-slate-700 active:bg-slate-900 border border-slate-700/60 rounded disabled:opacity-40 cursor-pointer"
+          >
+            Prev
+          </button>
+          <span className="text-[10px] text-slate-400 font-semibold">
+            Page {reportPage} of {Math.ceil(totalReports / 10)}
+          </span>
+          <button
+            onClick={() => fetchData(null, reportPage + 1)}
+            disabled={reportPage >= Math.ceil(totalReports / 10)}
+            className="px-2.5 py-1 text-[10px] font-bold bg-slate-800 hover:bg-slate-700 active:bg-slate-900 border border-slate-700/60 rounded disabled:opacity-40 cursor-pointer"
+          >
+            Next
+          </button>
+        </div>
+      )}
     </section>
   );
 

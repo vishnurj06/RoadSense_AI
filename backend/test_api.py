@@ -95,7 +95,9 @@ def test_create_and_get_report(client):
     # Test GET /reports
     response = client.get("/reports")
     assert response.status_code == 200
-    reports = response.json()
+    res_data = response.json()
+    assert "reports" in res_data
+    reports = res_data["reports"]
     assert len(reports) >= 1
     assert reports[0]["id"] == "test-uuid-1234"
 
@@ -130,7 +132,7 @@ def test_upload_image(client):
     assert response.status_code == 200
     data = response.json()
     assert "image_url" in data
-    assert data["image_url"].startswith("/static/uploads/")
+    assert data["image_url"].startswith("/static/uploads/") or "http" in data["image_url"]
 
 
 def test_spatial_clustering(client):

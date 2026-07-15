@@ -17,15 +17,71 @@ from fastapi import (
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
-from sqlalchemy import func, cast, inspect
+from sqlalchemy import func, cast, inspect, text
 from geoalchemy2 import Geography
 
 import models
 import schemas
 from database import get_db, SessionLocal, engine
 import auth
+import s3_storage
 
 INFERENCE_URL = os.getenv("INFERENCE_URL", "http://localhost:8001")
+
+# Redis Caching Config
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+redis_client = None
+try:
+    import redis
+    import json
+
+    redis_client = redis.Redis.from_url(REDIS_URL, decode_responses=True)
+    redis_client.ping()
+    print("Connected to Redis successfully.", flush=True)
+except Exception as e:
+    print(
+        f"Warning: Redis cache not available: {e}. Servicing requests live.", flush=True
+    )
+    redis_client = None
+
+
+def get_cache(key: str):
+    if not redis_client:
+        return None
+    try:
+        data = redis_client.get(key)
+        if data:
+            import json
+
+            return json.loads(data)
+    except Exception as e:
+        print(f"Redis get error: {e}", flush=True)
+    return None
+
+
+def set_cache(key: str, value: dict, expire: int = 300):
+    if not redis_client:
+        return
+    try:
+        import json
+
+        redis_client.set(key, json.dumps(value), ex=expire)
+    except Exception as e:
+        print(f"Redis set error: {e}", flush=True)
+
+
+def invalidate_cache(key: str):
+    if not redis_client:
+        return
+    try:
+        redis_client.delete(key)
+    except Exception as e:
+        print(f"Redis delete error: {e}", flush=True)
+
+
+def clear_all_caches():
+    invalidate_cache("cache_map_geojson")
+    invalidate_cache("cache_analytics")
 
 
 def seed_users():
@@ -69,6 +125,7 @@ def seed_users():
 
 
 seed_users()
+s3_storage.init_s3_bucket()
 
 
 # Helper function for spatial clustering
@@ -285,6 +342,38 @@ def read_root():
     }
 
 
+@app.get("/health")
+def health_check(db: Session = Depends(get_db)):
+    status_checks = {
+        "status": "healthy",
+        "database": "unhealthy",
+        "cache": "unhealthy",
+    }
+
+    try:
+        db.execute(text("SELECT 1"))
+        status_checks["database"] = "healthy"
+    except Exception as e:
+        status_checks["status"] = "unhealthy"
+        status_checks["database"] = f"unhealthy: {e}"
+
+    if redis_client:
+        try:
+            redis_client.ping()
+            status_checks["cache"] = "healthy"
+        except Exception as e:
+            status_checks["cache"] = f"unhealthy: {e}"
+    else:
+        status_checks["cache"] = "disabled"
+
+    if status_checks["status"] == "unhealthy":
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=status_checks,
+        )
+    return status_checks
+
+
 @app.post(
     "/detect",
     response_model=schemas.ReportResponse,
@@ -345,6 +434,8 @@ def create_report(
             detail=f"Database insertion failed: {e}",
         )
 
+    clear_all_caches()
+
     return db_report
 
 
@@ -371,9 +462,8 @@ async def detect_image(
             detail="invalid_image: Uploaded file is not an image.",
         )
 
-    # 2. Save file with UUID prepended to prevent overwrites
+    # 2. Save file with UUID prepended to prevent overwrites, upload to S3
     unique_filename = f"{uuid.uuid4()}_{file.filename}"
-    file_path = os.path.join(UPLOAD_DIR, unique_filename)
 
     try:
         contents = await file.read()
@@ -385,14 +475,18 @@ async def detect_image(
                 detail="image_too_large: Image exceeds 10 MB limit.",
             )
 
-        with open(file_path, "wb") as buffer:
-            buffer.write(contents)
+        # Upload bytes directly to S3/MinIO
+        s3_image_url = s3_storage.upload_image_bytes_to_s3(
+            contents=contents,
+            filename=unique_filename,
+            content_type=file.content_type,
+        )
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to save uploaded file: {e}",
+            detail=f"Failed to upload image file to S3: {e}",
         )
 
     # 3. Call INFERENCE_URL/infer using httpx
@@ -430,7 +524,7 @@ async def detect_image(
         geom=f"POINT({longitude} {latitude})",
         speed_kmph=speed_kmph,
         model_version=inference_data.get("model_version"),
-        image_url=f"/static/uploads/{unique_filename}",
+        image_url=s3_image_url,
     )
     db.add(db_report)
 
@@ -458,16 +552,35 @@ async def detect_image(
             detail=f"Database insertion failed: {e}",
         )
 
+    clear_all_caches()
+
     return db_report
 
 
-@app.get("/reports", response_model=List[schemas.ReportResponse])
+@app.get("/reports", response_model=schemas.PaginatedReportsResponse)
 def get_reports(
+    page: int = 1,
+    limit: int = 10,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth.get_current_user),
 ):
-    reports = db.query(models.Report).order_by(models.Report.timestamp.desc()).all()
-    return reports
+    if page < 1:
+        page = 1
+    if limit < 1:
+        limit = 10
+    elif limit > 100:
+        limit = 100
+
+    offset = (page - 1) * limit
+    total = db.query(models.Report).count()
+    reports = (
+        db.query(models.Report)
+        .order_by(models.Report.timestamp.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+    return {"reports": reports, "total": total, "page": page, "limit": limit}
 
 
 @app.get("/map")
@@ -475,6 +588,12 @@ def get_map_geojson(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth.get_current_user),
 ):
+    # --- Redis Cache Read ---
+    cache_key = "cache_map_geojson"
+    cached = get_cache(cache_key)
+    if cached is not None:
+        return cached
+
     issues = db.query(models.Issue).all()
 
     features = []
@@ -526,7 +645,10 @@ def get_map_geojson(
         }
         features.append(feature)
 
-    return {"type": "FeatureCollection", "features": features}
+    result = {"type": "FeatureCollection", "features": features}
+    # --- Redis Cache Write (TTL: 5 minutes) ---
+    set_cache(cache_key, result, expire=300)
+    return result
 
 
 @app.post("/verify")
@@ -549,30 +671,39 @@ def verify_reports(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Verification clustering failed: {e}",
         )
+    clear_all_caches()
     return {"message": f"Clustered {count} reports successfully."}
 
 
 @app.post("/upload")
-def upload_image(
+async def upload_image(
     file: UploadFile = File(...),
     current_user: models.User = Depends(auth.get_current_user),
 ):
-    # Generate unique filename to avoid overwrites
+    # Validate image format
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="invalid_image: Uploaded file is not an image.",
+        )
+
     file_ext = os.path.splitext(file.filename)[1]
     unique_filename = f"{uuid.uuid4()}{file_ext}"
-    file_path = os.path.join(UPLOAD_DIR, unique_filename)
 
     try:
-        with open(file_path, "wb") as buffer:
-            buffer.write(file.file.read())
+        contents = await file.read()
+        s3_image_url = s3_storage.upload_image_bytes_to_s3(
+            contents=contents,
+            filename=unique_filename,
+            content_type=file.content_type,
+        )
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to save uploaded file: {e}",
+            detail=f"Failed to upload file to S3: {e}",
         )
 
-    # Return relative web accessible path
-    return {"image_url": f"/static/uploads/{unique_filename}"}
+    return {"image_url": s3_image_url}
 
 
 @app.get("/analytics")
@@ -581,6 +712,12 @@ def get_analytics(
     current_user: models.User = Depends(auth.get_current_user),
 ):
     from datetime import timedelta
+
+    # --- Redis Cache Read ---
+    cache_key = "cache_analytics"
+    cached = get_cache(cache_key)
+    if cached is not None:
+        return cached
 
     reports_count = db.query(models.Report).count()
     detections = db.query(models.Detection).all()
@@ -629,13 +766,16 @@ def get_analytics(
                     day_counts["total"] += 1
         time_series.append(day_counts)
 
-    return {
+    result = {
         "total_reports": reports_count,
         "total_detections": len(detections),
         "severity_distribution": severity_counts,
         "class_distribution": class_counts,
         "time_series": time_series,
     }
+    # --- Redis Cache Write (TTL: 5 minutes) ---
+    set_cache(cache_key, result, expire=300)
+    return result
 
 
 @app.get("/admin/users", response_model=List[schemas.UserResponse])
@@ -739,6 +879,8 @@ def update_issue_status(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to update issue status: {e}",
         )
+
+    clear_all_caches()
 
     return issue
 

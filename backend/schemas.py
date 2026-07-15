@@ -66,6 +66,13 @@ class ReportResponse(BaseModel):
     detections: List[DetectionResponse] = []
 
 
+class PaginatedReportsResponse(BaseModel):
+    reports: List[ReportResponse]
+    total: int
+    page: int
+    limit: int
+
+
 class IssueStatusUpdate(BaseModel):
     issue_id: str = Field(..., description="ID of the issue to update")
     status: str = Field(..., description="Target status for transition")

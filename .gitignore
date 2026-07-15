@@ -19,3 +19,5 @@ frontend/out/
 # OS files
 .DS_Store
 Thumbs.db
+"backend/static/uploads/" 
+"backend/static/uploads/" 
