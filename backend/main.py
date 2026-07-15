@@ -1,4 +1,5 @@
 import os
+from contextlib import asynccontextmanager
 import uuid
 from datetime import datetime
 from typing import List, Optional
@@ -138,7 +139,42 @@ def cluster_report_to_issue(db: Session, report: models.Report):
 # But for tests, we will keep setup_db dropping and recreating them.
 # The endpoint startup won't create tables automatically now.
 
-app = FastAPI(title="RoadSense AI API", version="1.0.0")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup: seed default users
+    db = SessionLocal()
+    try:
+        user_count = db.query(models.User).count()
+        if user_count == 0:
+            print("Seeding default users...")
+            admin_user = models.User(
+                username="admin",
+                hashed_password=auth.hash_password("password"),
+                role="admin",
+            )
+            officer_user = models.User(
+                username="officer",
+                hashed_password=auth.hash_password("password"),
+                role="authority",
+            )
+            driver_user = models.User(
+                username="driver",
+                hashed_password=auth.hash_password("password"),
+                role="fleet",
+            )
+            db.add_all([admin_user, officer_user, driver_user])
+            db.commit()
+            print("Default users seeded successfully.")
+    except Exception as e:
+        print(f"Error seeding default users: {e}")
+        db.rollback()
+    finally:
+        db.close()
+    yield
+
+
+app = FastAPI(title="RoadSense AI API", version="1.0.0", lifespan=lifespan)
 
 # Enable CORS for the Next.js frontend
 app.add_middleware(
@@ -157,36 +193,6 @@ app.mount(
     StaticFiles(directory=os.path.join(os.path.dirname(__file__), "static")),
     name="static",
 )
-
-
-@app.on_event("startup")
-def seed_users_on_startup():
-    db = SessionLocal()
-    try:
-        user_count = db.query(models.User).count()
-        if user_count == 0:
-            admin_user = models.User(
-                username="admin",
-                hashed_password=auth.hash_password("password"),
-                role="admin",
-            )
-            officer_user = models.User(
-                username="officer",
-                hashed_password=auth.hash_password("password"),
-                role="authority",
-            )
-            driver_user = models.User(
-                username="driver",
-                hashed_password=auth.hash_password("password"),
-                role="fleet",
-            )
-            db.add_all([admin_user, officer_user, driver_user])
-            db.commit()
-    except Exception as e:
-        print(f"Error seeding default users: {e}")
-        db.rollback()
-    finally:
-        db.close()
 
 
 @app.post(
