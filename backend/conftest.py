@@ -1,3 +1,5 @@
+import time
+from sqlalchemy.exc import OperationalError
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import text
@@ -11,9 +13,19 @@ from test_api import engine
 
 @pytest.fixture(scope="session", autouse=True)
 def ensure_postgis():
-    with engine.connect() as conn:
-        conn.execute(text("CREATE EXTENSION IF NOT EXISTS postgis;"))
-        conn.commit()
+    # Retry database connection in case the test container is still warming up
+    retries = 10
+    while retries > 0:
+        try:
+            with engine.connect() as conn:
+                conn.execute(text("CREATE EXTENSION IF NOT EXISTS postgis;"))
+                conn.commit()
+            break
+        except OperationalError as e:
+            retries -= 1
+            if retries == 0:
+                raise e
+            time.sleep(1.5)
 
 
 @pytest.fixture(scope="session", autouse=True)
