@@ -1,23 +1,48 @@
 # Python virtual environments & caches
-backend/.venv/
+.venv/
+venv/
+ENV/
+env/
 __pycache__/
 *.pyc
 .pytest_cache/
+.ruff_cache/
 
 # Node dependencies & Next.js builds
-frontend/node_modules/
-frontend/.next/
-frontend/out/
+node_modules/
+.next/
+out/
 
 # Local configuration & environment files
 .env
+.env.*
+*.env
 .env.local
 .env.development.local
 .env.test.local
 .env.production.local
 
-# OS files
+# OS & IDE files
 .DS_Store
 Thumbs.db
-"backend/static/uploads/" 
-"backend/static/uploads/" 
+.vscode/settings.json
+pyrefly.toml
+
+# Large AI weight files
+*.pt
+*.onnx
+*.engine
+weights/
+ai/weights/
+
+# Local testing media, uploads, & datasets
+*.mp4
+*.avi
+*.mov
+*.mkv
+data/
+datasets/
+backend/static/uploads/
+
+# Sandbox / temporary folders
+roadsense-ai/

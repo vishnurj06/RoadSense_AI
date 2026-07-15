@@ -57,6 +57,7 @@ export default function Dashboard() {
     const saved = localStorage.getItem("user");
     return saved ? JSON.parse(saved) : null;
   });
+  const [mounted, setMounted] = useState(false);
   const [reports, setReports] = useState([]);
   const [mapIssues, setMapIssues] = useState([]);
   const [analytics, setAnalytics] = useState({
@@ -221,6 +222,7 @@ export default function Dashboard() {
   };
 
   useEffect(() => {
+    setMounted(true);
     // user is already populated from the lazy useState initializer above.
     // This effect only handles redirect and initial data fetch.
     if (!user) {
@@ -943,7 +945,7 @@ export default function Dashboard() {
             </div>
           )}
 
-          {user && (
+          {mounted && user && (
             <div className="flex items-center gap-3 bg-slate-900 border border-slate-800/80 px-3 py-1.5 rounded-xl">
               <div className="flex flex-col text-right">
                 <span className="text-[10px] font-bold text-slate-200">{user.username}</span>
@@ -1002,7 +1004,7 @@ export default function Dashboard() {
           </section>
 
           {/* Conditional Role-based layouts */}
-          {user?.role === "authority" && (
+          {mounted && user?.role === "authority" && (
             <>
               {renderFilters()}
               {renderPendingRepairQueue()}
@@ -1010,7 +1012,7 @@ export default function Dashboard() {
             </>
           )}
 
-          {user?.role === "fleet" && (
+          {mounted && user?.role === "fleet" && (
             <>
               {renderFilters()}
               {renderTelemetryUpload()}
@@ -1019,7 +1021,7 @@ export default function Dashboard() {
             </>
           )}
 
-          {user?.role === "admin" && (
+          {mounted && user?.role === "admin" && (
             <>
               {renderUserDirectory()}
               {renderSystemHealth()}

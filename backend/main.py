@@ -461,37 +461,20 @@ async def detect_image(
             detail="invalid_image: Uploaded file is not an image.",
         )
 
-    # 2. Save file with UUID prepended to prevent overwrites, upload to S3
-    unique_filename = f"{uuid.uuid4()}_{file.filename}"
-
-    try:
-        contents = await file.read()
-        file_size = len(contents)
-        # Check size (max 10MB)
-        if file_size > 10 * 1024 * 1024:
-            raise HTTPException(
-                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                detail="image_too_large: Image exceeds 10 MB limit.",
-            )
-
-        # Upload bytes directly to S3/MinIO
-        s3_image_url = s3_storage.upload_image_bytes_to_s3(
-            contents=contents,
-            filename=unique_filename,
-            content_type=file.content_type,
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
+    # First, read the file bytes
+    image_bytes = await file.read()
+    file_size = len(image_bytes)
+    # Check size (max 10MB)
+    if file_size > 10 * 1024 * 1024:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to upload image file to S3: {e}",
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="image_too_large: Image exceeds 10 MB limit.",
         )
 
-    # 3. Call INFERENCE_URL/infer using httpx
+    # 2. Call INFERENCE_URL/infer using httpx
     async with httpx.AsyncClient() as client:
         try:
-            files = {"file": (file.filename, contents, file.content_type)}
+            files = {"file": (file.filename, image_bytes, file.content_type)}
             response = await client.post(
                 f"{INFERENCE_URL}/infer",
                 files=files,
@@ -512,7 +495,27 @@ async def detect_image(
                 detail=f"Inference service is unreachable at {INFERENCE_URL}: {exc}",
             )
 
-    # 4. Insert Report
+    # 3. Extract detections and rewind file pointer (CRITICAL)
+    detections = inference_data.get("detections", [])
+    await file.seek(0)
+
+    # 4. Save file with UUID prepended to prevent overwrites, upload to S3
+    unique_filename = f"{uuid.uuid4()}_{file.filename}"
+    try:
+        contents = await file.read()
+        # Upload bytes directly to S3/MinIO
+        s3_image_url = s3_storage.upload_image_bytes_to_s3(
+            contents=contents,
+            filename=unique_filename,
+            content_type=file.content_type,
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to upload image file to S3: {e}",
+        )
+
+    # 5. Insert Report
     report_id = str(uuid.uuid4())
     db_report = models.Report(
         id=report_id,
@@ -527,8 +530,8 @@ async def detect_image(
     )
     db.add(db_report)
 
-    # 5. Insert associated Detections
-    for det in inference_data.get("detections", []):
+    # 6. Insert associated Detections
+    for det in detections:
         db_detection = models.Detection(
             id=str(uuid.uuid4()),
             report_id=report_id,
@@ -686,7 +689,7 @@ async def upload_image(
             detail="invalid_image: Uploaded file is not an image.",
         )
 
-    file_ext = os.path.splitext(file.filename)[1]
+    file_ext = os.path.splitext(file.filename or "")[1]
     unique_filename = f"{uuid.uuid4()}{file_ext}"
 
     try:
@@ -760,7 +763,7 @@ def get_analytics(
         for r in reports_on_day:
             for d in r.detections:
                 sev = d.severity.lower()
-                if sev in day_counts:
+                if sev in ("high", "medium", "low"):
                     day_counts[sev] += 1
                     day_counts["total"] += 1
         time_series.append(day_counts)
