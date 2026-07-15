@@ -53,7 +53,7 @@ def test_auth_register_and_login():
         assert "access_token" not in client.cookies
 
 
-def test_role_restrictions(setup_test_users):
+def test_role_restrictions():
     from database import SessionLocal
     import models
 
