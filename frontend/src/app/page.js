@@ -222,6 +222,7 @@ export default function Dashboard() {
   };
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setMounted(true);
     // user is already populated from the lazy useState initializer above.
     // This effect only handles redirect and initial data fetch.
@@ -229,7 +230,6 @@ export default function Dashboard() {
       router.push("/login");
       return;
     }
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchData(user);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
