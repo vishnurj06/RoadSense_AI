@@ -110,7 +110,14 @@ function IssuePopupContent({ report, onRefresh }) {
           status: targetStatus,
           notes: notesInput,
         }),
+        credentials: "include",
       });
+
+      if (res.status === 401) {
+        localStorage.removeItem("user");
+        window.location.href = "/login";
+        return;
+      }
 
       if (!res.ok) {
         const errJson = await res.json().catch(() => ({}));

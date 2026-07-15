@@ -30,7 +30,24 @@ def setup_db():
 
 @pytest.fixture
 def client():
+    from database import SessionLocal
+    import models
+    import auth
+
+    db = SessionLocal()
+    if not db.query(models.User).filter(models.User.username == "test_admin").first():
+        admin = models.User(
+            username="test_admin",
+            hashed_password=auth.hash_password("password"),
+            role="admin",
+        )
+        db.add(admin)
+        db.commit()
+    db.close()
+
     with TestClient(app) as c:
+        token = auth.create_access_token(data={"sub": "test_admin"})
+        c.cookies.set("access_token", token)
         yield c
 
 

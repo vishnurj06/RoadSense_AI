@@ -56,15 +56,15 @@
 - [x] Verify repair flow walks issue from end to end.
 
 ## B-4: Auth & Roles
-- [ ] Implement `POST /auth/login` and `POST /auth/register` endpoints.
-- [ ] Hash credentials using bcrypt/argon2.
-- [ ] Implement role-based access: `authority`, `fleet`, `admin`.
-- [ ] Protect mutating endpoints with FastAPI dependencies.
-- [ ] Lock down CORS origins in `main.py` (remove `*`).
-- [ ] Update frontend:
-  - [ ] Login page & router guards.
-  - [ ] Secure cookies / token handling.
-- [ ] Verify that unauthenticated requests to mutating endpoints return 401.
+- [x] Implement `POST /auth/login` and `POST /auth/register` endpoints.
+- [x] Hash credentials using bcrypt/argon2.
+- [x] Implement role-based access: `authority`, `fleet`, `admin`.
+- [x] Protect mutating endpoints with FastAPI dependencies.
+- [x] Lock down CORS origins in `main.py` (remove `*`).
+- [x] Update frontend:
+  - [x] Login page & router guards.
+  - [x] Secure cookies / token handling.
+- [x] Verify that unauthenticated requests to mutating endpoints return 401.
 
 ## B-5: Dashboards
 - [ ] Implement role-specific views on frontend:

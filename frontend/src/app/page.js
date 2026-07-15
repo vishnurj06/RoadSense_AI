@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import {
   Activity,
@@ -32,6 +33,8 @@ const MapComponent = dynamic(
 const BACKEND_URL = "http://localhost:8000";
 
 export default function Dashboard() {
+  const router = useRouter();
+  const [user, setUser] = useState(null);
   const [reports, setReports] = useState([]);
   const [mapIssues, setMapIssues] = useState([]);
   const [analytics, setAnalytics] = useState({
@@ -68,10 +71,16 @@ export default function Dashboard() {
       setError(null);
       
       const [reportsRes, analyticsRes, mapRes] = await Promise.all([
-        fetch(`${BACKEND_URL}/reports`),
-        fetch(`${BACKEND_URL}/analytics`),
-        fetch(`${BACKEND_URL}/map`)
+        fetch(`${BACKEND_URL}/reports`, { credentials: "include" }),
+        fetch(`${BACKEND_URL}/analytics`, { credentials: "include" }),
+        fetch(`${BACKEND_URL}/map`, { credentials: "include" })
       ]);
+
+      if (reportsRes.status === 401 || analyticsRes.status === 401 || mapRes.status === 401) {
+        localStorage.removeItem("user");
+        router.push("/login");
+        return;
+      }
 
       if (!reportsRes.ok || !analyticsRes.ok || !mapRes.ok) {
         throw new Error("Failed to fetch dashboard data from backend server.");
@@ -106,11 +115,27 @@ export default function Dashboard() {
     }
   };
 
+  const handleLogout = async () => {
+    try {
+      await fetch(`${BACKEND_URL}/auth/logout`, {
+        method: "POST",
+        credentials: "include",
+      });
+    } catch (e) {
+      console.error("Logout request failed:", e);
+    }
+    localStorage.removeItem("user");
+    router.push("/login");
+  };
+
   useEffect(() => {
-    const timer = setTimeout(() => {
-      fetchData();
-    }, 0);
-    return () => clearTimeout(timer);
+    const savedUser = localStorage.getItem("user");
+    if (!savedUser) {
+      router.push("/login");
+      return;
+    }
+    setUser(JSON.parse(savedUser));
+    fetchData();
   }, []);
 
   // Filter reports according to severity filter and class filter
@@ -189,10 +214,18 @@ export default function Dashboard() {
       formData.append("speed_kmph", mockSpeed.toString());
 
       // 3. Call backend POST /detect-image
+      // 3. Call backend POST /detect-image
       const response = await fetch(`${BACKEND_URL}/detect-image`, {
         method: "POST",
         body: formData,
+        credentials: "include",
       });
+
+      if (response.status === 401) {
+        localStorage.removeItem("user");
+        router.push("/login");
+        return;
+      }
 
       if (!response.ok) {
         const errJson = await response.json().catch(() => ({}));
@@ -246,6 +279,23 @@ export default function Dashboard() {
               <span>{error}</span>
             </div>
           )}
+          
+          {user && (
+            <div className="flex items-center gap-3 bg-slate-900 border border-slate-800/80 px-3 py-1.5 rounded-xl">
+              <div className="flex flex-col text-right">
+                <span className="text-[10px] font-bold text-slate-200">{user.username}</span>
+                <span className="text-[8px] uppercase tracking-wider font-semibold text-slate-500">{user.role}</span>
+              </div>
+              <div className="h-4 w-px bg-slate-800/60"></div>
+              <button
+                onClick={handleLogout}
+                className="text-[10px] font-extrabold text-red-400 hover:text-red-300 transition duration-150 cursor-pointer"
+              >
+                Log Out
+              </button>
+            </div>
+          )}
+
           <button
             onClick={fetchData}
             disabled={loading}

@@ -3,7 +3,16 @@ import uuid
 from datetime import datetime
 from typing import List, Optional
 import httpx
-from fastapi import FastAPI, Depends, HTTPException, File, UploadFile, status, Form
+from fastapi import (
+    FastAPI,
+    Depends,
+    HTTPException,
+    File,
+    UploadFile,
+    status,
+    Form,
+    Response,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
@@ -12,7 +21,8 @@ from geoalchemy2 import Geography
 
 import models
 import schemas
-from database import get_db
+from database import get_db, SessionLocal
+import auth
 
 INFERENCE_URL = os.getenv("INFERENCE_URL", "http://localhost:8001")
 
@@ -133,7 +143,7 @@ app = FastAPI(title="RoadSense AI API", version="1.0.0")
 # Enable CORS for the Next.js frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # For local PoC, allow all origins
+    allow_origins=["http://localhost:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -149,6 +159,110 @@ app.mount(
 )
 
 
+@app.on_event("startup")
+def seed_users_on_startup():
+    db = SessionLocal()
+    try:
+        user_count = db.query(models.User).count()
+        if user_count == 0:
+            admin_user = models.User(
+                username="admin",
+                hashed_password=auth.hash_password("password"),
+                role="admin",
+            )
+            officer_user = models.User(
+                username="officer",
+                hashed_password=auth.hash_password("password"),
+                role="authority",
+            )
+            driver_user = models.User(
+                username="driver",
+                hashed_password=auth.hash_password("password"),
+                role="fleet",
+            )
+            db.add_all([admin_user, officer_user, driver_user])
+            db.commit()
+    except Exception as e:
+        print(f"Error seeding default users: {e}")
+        db.rollback()
+    finally:
+        db.close()
+
+
+@app.post(
+    "/auth/register",
+    response_model=schemas.UserResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def register_user(payload: schemas.UserRegister, db: Session = Depends(get_db)):
+    existing = (
+        db.query(models.User).filter(models.User.username == payload.username).first()
+    )
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Username already registered.",
+        )
+
+    db_user = models.User(
+        username=payload.username,
+        hashed_password=auth.hash_password(payload.password),
+        role=payload.role,
+    )
+    db.add(db_user)
+    try:
+        db.commit()
+        db.refresh(db_user)
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
+        )
+    return db_user
+
+
+@app.post("/auth/login")
+def login_user(
+    payload: schemas.UserLogin, response: Response, db: Session = Depends(get_db)
+):
+    user = (
+        db.query(models.User).filter(models.User.username == payload.username).first()
+    )
+    if not user or not auth.verify_password(payload.password, user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    token = auth.create_access_token(data={"sub": user.username})
+
+    response.set_cookie(
+        key="access_token",
+        value=token,
+        httponly=True,
+        samesite="lax",
+        secure=False,
+        max_age=3600,
+    )
+
+    return {
+        "user": {"id": user.id, "username": user.username, "role": user.role},
+        "token": token,
+    }
+
+
+@app.post("/auth/logout")
+def logout_user(response: Response):
+    response.delete_cookie("access_token")
+    return {"message": "Logged out successfully."}
+
+
+@app.get("/auth/me", response_model=schemas.UserResponse)
+def get_me(current_user: models.User = Depends(auth.get_current_user)):
+    return current_user
+
+
 @app.get("/")
 def read_root():
     return {
@@ -161,7 +275,11 @@ def read_root():
     response_model=schemas.ReportResponse,
     status_code=status.HTTP_201_CREATED,
 )
-def create_report(payload: schemas.ReportCreate, db: Session = Depends(get_db)):
+def create_report(
+    payload: schemas.ReportCreate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.RoleChecker(["fleet", "admin"])),
+):
     # 1. Determine Report ID
     report_id = payload.report_id or str(uuid.uuid4())
 
@@ -229,6 +347,7 @@ async def detect_image(
         None, description="Optional vehicle speed in km/h"
     ),
     db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.RoleChecker(["fleet", "admin"])),
 ):
     # 1. Validate image format
     if not file.content_type or not file.content_type.startswith("image/"):
@@ -328,13 +447,19 @@ async def detect_image(
 
 
 @app.get("/reports", response_model=List[schemas.ReportResponse])
-def get_reports(db: Session = Depends(get_db)):
+def get_reports(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_user),
+):
     reports = db.query(models.Report).order_by(models.Report.timestamp.desc()).all()
     return reports
 
 
 @app.get("/map")
-def get_map_geojson(db: Session = Depends(get_db)):
+def get_map_geojson(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_user),
+):
     issues = db.query(models.Issue).all()
 
     features = []
@@ -390,7 +515,10 @@ def get_map_geojson(db: Session = Depends(get_db)):
 
 
 @app.post("/verify")
-def verify_reports(db: Session = Depends(get_db)):
+def verify_reports(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.RoleChecker(["authority", "admin"])),
+):
     unclustered_reports = (
         db.query(models.Report).filter(models.Report.issue_id.is_(None)).all()
     )
@@ -410,7 +538,10 @@ def verify_reports(db: Session = Depends(get_db)):
 
 
 @app.post("/upload")
-def upload_image(file: UploadFile = File(...)):
+def upload_image(
+    file: UploadFile = File(...),
+    current_user: models.User = Depends(auth.get_current_user),
+):
     # Generate unique filename to avoid overwrites
     file_ext = os.path.splitext(file.filename)[1]
     unique_filename = f"{uuid.uuid4()}{file_ext}"
@@ -430,7 +561,10 @@ def upload_image(file: UploadFile = File(...)):
 
 
 @app.get("/analytics")
-def get_analytics(db: Session = Depends(get_db)):
+def get_analytics(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_user),
+):
     reports_count = db.query(models.Report).count()
     detections = db.query(models.Detection).all()
 
@@ -468,7 +602,9 @@ VALID_TRANSITIONS = {
 
 @app.post("/repair", response_model=schemas.IssueResponse)
 def update_issue_status(
-    payload: schemas.IssueStatusUpdate, db: Session = Depends(get_db)
+    payload: schemas.IssueStatusUpdate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.RoleChecker(["authority", "admin"])),
 ):
     # 1. Fetch issue
     issue = db.query(models.Issue).filter(models.Issue.id == payload.issue_id).first()
@@ -496,7 +632,7 @@ def update_issue_status(
     audit_log = models.IssueAuditLog(
         id=str(uuid.uuid4()),
         issue_id=issue.id,
-        changed_by="authority_user",
+        changed_by=current_user.username,
         old_status=old_status,
         new_status=new_status,
         notes=payload.notes,
@@ -518,7 +654,11 @@ def update_issue_status(
 
 
 @app.get("/issues/{issue_id}/audit-log", response_model=List[schemas.AuditLogResponse])
-def get_issue_audit_log(issue_id: str, db: Session = Depends(get_db)):
+def get_issue_audit_log(
+    issue_id: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_user),
+):
     issue = db.query(models.Issue).filter(models.Issue.id == issue_id).first()
     if not issue:
         raise HTTPException(
