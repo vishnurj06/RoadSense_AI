@@ -107,7 +107,10 @@ export default function Dashboard() {
   };
 
   useEffect(() => {
-    fetchData();
+    const timer = setTimeout(() => {
+      fetchData();
+    }, 0);
+    return () => clearTimeout(timer);
   }, []);
 
   // Filter reports according to severity filter and class filter
