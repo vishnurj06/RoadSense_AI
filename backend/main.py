@@ -580,6 +580,8 @@ def get_analytics(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth.get_current_user),
 ):
+    from datetime import timedelta
+
     reports_count = db.query(models.Report).count()
     detections = db.query(models.Detection).all()
 
@@ -595,12 +597,85 @@ def get_analytics(
         cls = d.class_name.lower()
         class_counts[cls] = class_counts.get(cls, 0) + 1
 
+    # Time series of past 7 days (by report date)
+    today = datetime.utcnow().date()
+    time_series = []
+    for i in range(6, -1, -1):
+        target_date = today - timedelta(days=i)
+        day_start = datetime.combine(target_date, datetime.min.time())
+        day_end = datetime.combine(target_date, datetime.max.time())
+
+        reports_on_day = (
+            db.query(models.Report)
+            .filter(
+                models.Report.timestamp >= day_start,
+                models.Report.timestamp <= day_end,
+            )
+            .all()
+        )
+
+        day_counts = {
+            "date": target_date.strftime("%b %d"),
+            "high": 0,
+            "medium": 0,
+            "low": 0,
+            "total": 0,
+        }
+        for r in reports_on_day:
+            for d in r.detections:
+                sev = d.severity.lower()
+                if sev in day_counts:
+                    day_counts[sev] += 1
+                    day_counts["total"] += 1
+        time_series.append(day_counts)
+
     return {
         "total_reports": reports_count,
         "total_detections": len(detections),
         "severity_distribution": severity_counts,
         "class_distribution": class_counts,
+        "time_series": time_series,
     }
+
+
+@app.get("/admin/users", response_model=List[schemas.UserResponse])
+def list_admin_users(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.RoleChecker(["admin"])),
+):
+    return db.query(models.User).order_by(models.User.username.asc()).all()
+
+
+@app.get("/admin/system-health")
+def get_system_health(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.RoleChecker(["admin"])),
+):
+    # Simulated system stats for local dashboard demo
+    return {
+        "cpu_usage_pct": 34.5,
+        "memory_usage_pct": 58.2,
+        "db_active_connections": 4,
+        "db_max_connections": 20,
+        "stub_inference_latency_ms": 15,
+        "stub_inference_status": "ok",
+        "disk_used_mb": 4.2,
+        "disk_total_mb": 10240,
+    }
+
+
+@app.post("/admin/users/role")
+def update_user_role(
+    payload: schemas.UserRoleUpdate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.RoleChecker(["admin"])),
+):
+    user = db.query(models.User).filter(models.User.id == payload.user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    user.role = payload.role
+    db.commit()
+    return {"status": "success"}
 
 
 # Status transition rules

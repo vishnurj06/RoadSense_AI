@@ -13,8 +13,25 @@ import {
   Calendar,
   Car,
   CheckCircle,
-  FileSpreadsheet
+  FileSpreadsheet,
+  Shield,
+  Users,
+  Server,
+  HardDrive,
+  Cpu,
+  Compass
 } from "lucide-react";
+import {
+  ResponsiveContainer,
+  AreaChart,
+  Area,
+  XAxis,
+  YAxis,
+  Tooltip as ChartTooltip,
+  PieChart,
+  Pie,
+  Cell
+} from "recharts";
 
 // Dynamically load MapComponent with SSR disabled
 const MapComponent = dynamic(
@@ -41,12 +58,17 @@ export default function Dashboard() {
     total_reports: 0,
     total_detections: 0,
     severity_distribution: { high: 0, medium: 0, low: 0 },
-    class_distribution: {}
+    class_distribution: {},
+    time_series: []
   });
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState(null);
   const [toast, setToast] = useState(null);
+
+  // Admin Dashboard stats
+  const [adminUsers, setAdminUsers] = useState([]);
+  const [systemHealth, setSystemHealth] = useState(null);
 
   const showToast = (message, type = "info") => {
     setToast({ message, type });
@@ -65,10 +87,12 @@ export default function Dashboard() {
   const [classFilter, setClassFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
 
-  const fetchData = async () => {
+  const fetchData = async (currentUser = null) => {
     try {
       setLoading(true);
       setError(null);
+
+      const activeUser = currentUser || user;
       
       const [reportsRes, analyticsRes, mapRes] = await Promise.all([
         fetch(`${BACKEND_URL}/reports`, { credentials: "include" }),
@@ -104,9 +128,24 @@ export default function Dashboard() {
         detection_count: f.properties.detection_count,
         detections: f.properties.detections,
         speed_kmph: f.properties.speed_kmph,
-        model_version: f.properties.model_version
+        model_version: f.properties.model_version,
+        status: f.properties.status
       }));
       setMapIssues(issues);
+
+      // Fetch admin users and stats if the user role is admin
+      if (activeUser && activeUser.role === "admin") {
+        const [usersRes, healthRes] = await Promise.all([
+          fetch(`${BACKEND_URL}/admin/users`, { credentials: "include" }),
+          fetch(`${BACKEND_URL}/admin/system-health`, { credentials: "include" })
+        ]);
+        if (usersRes.ok && healthRes.ok) {
+          const usersData = await usersRes.json();
+          const healthData = await healthRes.json();
+          setAdminUsers(usersData);
+          setSystemHealth(healthData);
+        }
+      }
     } catch (err) {
       console.error(err);
       setError("Backend connection offline. Make sure the FastAPI server is running on http://localhost:8000.");
@@ -128,14 +167,55 @@ export default function Dashboard() {
     router.push("/login");
   };
 
+  const handleQuickAction = async (issueId, nextStatus) => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/repair`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ issue_id: issueId, status: nextStatus }),
+        credentials: "include"
+      });
+      if (res.ok) {
+        showToast(`Issue status updated to ${nextStatus}`, "success");
+        fetchData();
+      } else {
+        const err = await res.json();
+        showToast(err.detail || "Failed to update status", "error");
+      }
+    } catch (e) {
+      showToast("Connection error", "error");
+    }
+  };
+
+  const handleUserRoleToggle = async (userId, newRole) => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/admin/users/role`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_id: userId, role: newRole }),
+        credentials: "include"
+      });
+      if (res.ok) {
+        showToast(`User role updated to ${newRole}`, "success");
+        fetchData();
+      } else {
+        const err = await res.json();
+        showToast(err.detail || "Failed to update user role", "error");
+      }
+    } catch (e) {
+      showToast("Connection error", "error");
+    }
+  };
+
   useEffect(() => {
     const savedUser = localStorage.getItem("user");
     if (!savedUser) {
       router.push("/login");
       return;
     }
-    setUser(JSON.parse(savedUser));
-    fetchData();
+    const parsed = JSON.parse(savedUser);
+    setUser(parsed);
+    fetchData(parsed);
   }, []);
 
   // Filter reports according to severity filter and class filter
@@ -254,6 +334,552 @@ export default function Dashboard() {
   };
 
 
+  const renderFilters = () => (
+    <section className="bg-slate-900/40 border border-slate-800/60 p-4 rounded-2xl flex flex-col gap-3 shrink-0">
+      <div className="flex items-center gap-2 text-xs font-bold text-slate-400">
+        <Sliders className="h-4 w-4" />
+        <span>DASHBOARD FILTERS</span>
+      </div>
+
+      {/* Severity Filter */}
+      <div className="flex flex-col gap-1.5 mt-1">
+        <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wide">Severity Toggles:</span>
+        <div className="flex gap-2">
+          {Object.keys(severityFilter).map((sev) => (
+            <button
+              key={sev}
+              onClick={() => setSeverityFilter(prev => ({ ...prev, [sev]: !prev[sev] }))}
+              className={`flex-1 py-1.5 px-3 text-xs font-semibold rounded-xl border transition cursor-pointer capitalize ${
+                severityFilter[sev]
+                  ? sev === "high"
+                    ? "bg-red-500/10 text-red-400 border-red-500/40"
+                    : sev === "medium"
+                    ? "bg-orange-500/10 text-orange-400 border-orange-500/40"
+                    : "bg-green-500/10 text-green-400 border-green-500/40"
+                  : "bg-slate-950/20 text-slate-500 border-slate-800 hover:border-slate-700"
+              }`}
+            >
+              {sev}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Class Filter */}
+      <div className="flex flex-col gap-1.5 mt-1">
+        <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wide">Hazard Type:</span>
+        <div className="flex gap-2">
+          {["all", "pothole", "crack"].map((cls) => (
+            <button
+              key={cls}
+              onClick={() => setClassFilter(cls)}
+              className={`flex-1 py-1.5 px-3 text-xs font-semibold rounded-xl border transition cursor-pointer capitalize ${
+                classFilter === cls
+                  ? "bg-blue-600/20 text-blue-400 border-blue-500/40"
+                  : "bg-slate-950/20 text-slate-500 border-slate-800 hover:border-slate-700"
+              }`}
+            >
+              {cls === "all" ? "All Hazards" : cls + "s"}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Status Filter */}
+      <div className="flex flex-col gap-1.5 mt-1">
+        <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wide">Status Filter:</span>
+        <select
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value)}
+          className="bg-slate-950 border border-slate-800 rounded-xl text-xs p-2 text-slate-300 focus:outline-none focus:border-blue-500 w-full"
+        >
+          <option value="all">All Statuses</option>
+          <option value="detected">Detected</option>
+          <option value="verified">Verified</option>
+          <option value="assigned">Assigned</option>
+          <option value="inspection">Inspection</option>
+          <option value="repair">Repair</option>
+          <option value="completed">Completed</option>
+          <option value="closed">Closed</option>
+        </select>
+      </div>
+    </section>
+  );
+
+  const renderTelemetryUpload = () => (
+    <section className="bg-slate-900/40 border border-slate-800/60 p-4 rounded-2xl flex flex-col gap-3 shrink-0">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2 text-xs font-bold text-slate-400">
+          <Upload className="h-4 w-4" />
+          <span>DEMO TELEMETRY UPLOAD</span>
+        </div>
+        {uploading && (
+          <span className="text-[10px] text-blue-400 animate-pulse font-bold">Uploading...</span>
+        )}
+      </div>
+
+      <label className={`w-full h-24 rounded-2xl border border-dashed border-slate-800 bg-slate-950/30 flex flex-col items-center justify-center cursor-pointer transition duration-150 relative ${uploading ? "opacity-50 pointer-events-none" : "hover:border-blue-500/50 hover:bg-slate-900/30"}`}>
+        <input
+          type="file"
+          accept="image/*"
+          onChange={handleImageUpload}
+          className="hidden"
+          disabled={uploading}
+        />
+        <Upload className="h-5 w-5 text-slate-500 mb-1.5" />
+        <span className="text-xs text-slate-400 font-semibold text-center">Click to upload road image</span>
+        <span className="text-[9px] text-slate-600 text-center mt-0.5">Mock GPS tags Mumbai area on map</span>
+      </label>
+    </section>
+  );
+
+  const renderReportLogs = () => (
+    <section className="flex-1 bg-slate-900/40 border border-slate-800/60 p-4 rounded-2xl flex flex-col overflow-hidden min-h-[12rem]">
+      <div className="flex items-center justify-between mb-3 shrink-0">
+        <div className="flex items-center gap-2 text-xs font-bold text-slate-400">
+          <FileSpreadsheet className="h-4 w-4" />
+          <span>REPORT LOGS ({filteredReports.length})</span>
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto custom-scrollbar space-y-2 pr-1">
+        {filteredReports.length === 0 ? (
+          <div className="h-full flex flex-col items-center justify-center text-slate-600 text-xs py-8">
+            <CheckCircle className="h-8 w-8 mb-2 opacity-30 text-green-500" />
+            No reports matching current filters.
+          </div>
+        ) : (
+          filteredReports.map((report) => {
+            const severities = report.detections?.map((d) => d.severity.toLowerCase()) || [];
+            let maxSeverity = "low";
+            if (severities.includes("high")) maxSeverity = "high";
+            else if (severities.includes("medium")) maxSeverity = "medium";
+
+            return (
+              <div
+                key={report.id}
+                className="bg-slate-950/40 hover:bg-slate-900/30 border border-slate-800/80 hover:border-slate-700/60 rounded-xl p-3 flex items-center justify-between transition duration-150 gap-3"
+              >
+                <div className="flex flex-col gap-0.5 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-slate-100 truncate">
+                      Vehicle: {report.vehicle_id}
+                    </span>
+                    <span
+                      className={`text-[9px] font-extrabold uppercase px-1.5 py-0.5 rounded-full shrink-0 border ${
+                        maxSeverity === "high"
+                          ? "bg-red-500/10 text-red-400 border-red-500/20"
+                          : maxSeverity === "medium"
+                          ? "bg-orange-500/10 text-orange-400 border-orange-500/20"
+                          : "bg-green-500/10 text-green-400 border-green-500/20"
+                      }`}
+                    >
+                      {maxSeverity}
+                    </span>
+                    <span
+                      className={`text-[8px] font-extrabold uppercase px-1.5 py-0.5 rounded-full shrink-0 border ${
+                        (report.status || "detected").toLowerCase() === "verified"
+                          ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                          : (report.status || "detected").toLowerCase() === "assigned"
+                          ? "bg-indigo-500/10 text-indigo-400 border-indigo-500/20"
+                          : (report.status || "detected").toLowerCase() === "inspection"
+                          ? "bg-amber-500/10 text-amber-400 border-amber-500/20"
+                          : (report.status || "detected").toLowerCase() === "repair"
+                          ? "bg-orange-500/10 text-orange-400 border-orange-500/20"
+                          : (report.status || "detected").toLowerCase() === "completed"
+                          ? "bg-teal-500/10 text-teal-400 border-teal-500/20"
+                          : (report.status || "detected").toLowerCase() === "closed"
+                          ? "bg-rose-500/10 text-rose-400 border-rose-500/20"
+                          : "bg-slate-800 text-slate-400 border-slate-700"
+                      }`}
+                    >
+                      {report.status || "detected"}
+                    </span>
+                  </div>
+                  <div className="text-[10px] text-slate-500 flex items-center gap-1.5 mt-0.5">
+                    <Calendar className="h-3 w-3 shrink-0" />
+                    <span>
+                      {new Date(report.timestamp).toLocaleString([], {
+                        month: "short",
+                        day: "numeric",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex flex-col items-end gap-1 shrink-0">
+                  <div className="text-[10px] text-slate-400 font-bold bg-slate-900 border border-slate-800 px-2 py-0.5 rounded">
+                    {report.detections?.length || 0} Detections
+                  </div>
+                  <span className="text-[9px] text-slate-600 italic truncate">
+                    Lat: {report.latitude.toFixed(4)}, Lon: {report.longitude.toFixed(4)}
+                    {report.speed_kmph !== undefined && report.speed_kmph !== null && ` | ${report.speed_kmph} km/h`}
+                  </span>
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+    </section>
+  );
+
+  const renderPendingRepairQueue = () => {
+    const pendingIssues = mapIssues.filter(issue =>
+      ["detected", "verified", "repair"].includes((issue.status || "detected").toLowerCase())
+    );
+
+    return (
+      <section className="bg-slate-900/40 border border-slate-800/60 p-4 rounded-2xl flex flex-col overflow-hidden min-h-[16rem] max-h-[22rem]">
+        <div className="flex items-center justify-between mb-3 shrink-0">
+          <div className="flex items-center gap-2 text-xs font-bold text-slate-400">
+            <Activity className="h-4 w-4 text-blue-400" />
+            <span>PENDING ACTION QUEUE ({pendingIssues.length})</span>
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto custom-scrollbar space-y-2 pr-1">
+          {pendingIssues.length === 0 ? (
+            <div className="h-full flex flex-col items-center justify-center text-slate-600 text-xs py-8">
+              <CheckCircle className="h-8 w-8 mb-2 opacity-30 text-green-500" />
+              No issues pending action.
+            </div>
+          ) : (
+            pendingIssues.map((issue) => {
+              const maxSeverity = issue.max_severity?.toLowerCase() || "low";
+              const nextStatusMap = {
+                detected: "verified",
+                verified: "repair",
+                repair: "completed"
+              };
+              const actionLabelMap = {
+                detected: "Verify",
+                verified: "Dispatch",
+                repair: "Complete"
+              };
+              const currentStatus = (issue.status || "detected").toLowerCase();
+              const nextStatus = nextStatusMap[currentStatus];
+              const actionLabel = actionLabelMap[currentStatus];
+
+              return (
+                <div
+                  key={issue.id}
+                  className="bg-slate-950/40 border border-slate-800/80 rounded-xl p-3 flex flex-col gap-2 transition duration-150"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold text-slate-100">
+                        Issue: #{issue.id.slice(0, 8)}
+                      </span>
+                      <span
+                        className={`text-[9px] font-extrabold uppercase px-1.5 py-0.5 rounded-full shrink-0 border ${
+                          maxSeverity === "high"
+                            ? "bg-red-500/10 text-red-400 border-red-500/20"
+                            : maxSeverity === "medium"
+                            ? "bg-orange-500/10 text-orange-400 border-orange-500/20"
+                            : "bg-green-500/10 text-green-400 border-green-500/20"
+                        }`}
+                      >
+                        {maxSeverity}
+                      </span>
+                    </div>
+                    <span className="text-[10px] text-slate-400 bg-slate-900 border border-slate-800 px-2 py-0.5 rounded">
+                      {issue.detection_count} reports
+                    </span>
+                  </div>
+
+                  <div className="flex items-center justify-between mt-1">
+                    <span className="text-[10px] text-slate-500 italic">
+                      Type: {issue.class_name || "Mixed"} | Lat: {issue.latitude.toFixed(4)}
+                    </span>
+                    {nextStatus && (
+                      <button
+                        onClick={() => handleQuickAction(issue.id, nextStatus)}
+                        className="px-2 py-1 text-[10px] font-extrabold bg-blue-600 hover:bg-blue-500 text-white rounded transition cursor-pointer"
+                      >
+                        {actionLabel}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+      </section>
+    );
+  };
+
+  const renderAnalyticsCharts = () => {
+    const pieData = Object.entries(analytics.class_distribution || {}).map(([name, value]) => ({
+      name: name.toUpperCase(),
+      value
+    }));
+    const COLORS = ["#3b82f6", "#6366f1", "#f59e0b", "#ec4899"];
+
+    return (
+      <section className="bg-slate-900/40 border border-slate-800/60 p-4 rounded-2xl flex flex-col gap-4 shrink-0">
+        <div>
+          <span className="text-xs font-bold text-slate-400 uppercase tracking-wide">REPORT VOLUME TRENDS</span>
+          <div className="mt-3">
+            {analytics.time_series && analytics.time_series.length > 0 ? (
+              <ResponsiveContainer width="100%" height={150}>
+                <AreaChart data={analytics.time_series} margin={{ top: 5, right: 5, left: -25, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="colorHigh" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#ef4444" stopOpacity={0.2}/>
+                      <stop offset="95%" stopColor="#ef4444" stopOpacity={0}/>
+                    </linearGradient>
+                    <linearGradient id="colorTotal" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.2}/>
+                      <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
+                    </linearGradient>
+                  </defs>
+                  <XAxis dataKey="date" stroke="#64748b" fontSize={9} tickLine={false} />
+                  <YAxis stroke="#64748b" fontSize={9} tickLine={false} />
+                  <ChartTooltip contentStyle={{ backgroundColor: "#0f172a", borderColor: "#334155", borderRadius: "8px" }} labelStyle={{ color: "#94a3b8", fontSize: 9 }} itemStyle={{ fontSize: 9 }} />
+                  <Area type="monotone" dataKey="total" stroke="#3b82f6" fillOpacity={1} fill="url(#colorTotal)" name="Total Reports" strokeWidth={1.5} />
+                  <Area type="monotone" dataKey="high" stroke="#ef4444" fillOpacity={1} fill="url(#colorHigh)" name="High Severity" strokeWidth={1.5} />
+                </AreaChart>
+              </ResponsiveContainer>
+            ) : (
+              <p className="text-xs text-slate-600 text-center py-4">No time-series data available</p>
+            )}
+          </div>
+        </div>
+
+        <div className="border-t border-slate-800/80 pt-4">
+          <span className="text-xs font-bold text-slate-400 uppercase tracking-wide">HAZARD DISTRIBUTION</span>
+          <div className="flex items-center justify-between gap-2 mt-2">
+            <div className="flex-1">
+              {pieData.length > 0 ? (
+                <ResponsiveContainer width="100%" height={120}>
+                  <PieChart>
+                    <Pie
+                      data={pieData}
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={25}
+                      outerRadius={45}
+                      paddingAngle={4}
+                      dataKey="value"
+                    >
+                      {pieData.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                      ))}
+                    </Pie>
+                    <ChartTooltip contentStyle={{ backgroundColor: "#0f172a", borderColor: "#334155", borderRadius: "8px" }} itemStyle={{ fontSize: 9 }} />
+                  </PieChart>
+                </ResponsiveContainer>
+              ) : (
+                <p className="text-xs text-slate-600 text-center py-4">No hazard breakdown available</p>
+              )}
+            </div>
+
+            <div className="flex flex-col gap-1.5 shrink-0">
+              {pieData.map((d, index) => (
+                <div key={d.name} className="flex items-center gap-2">
+                  <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: COLORS[index % COLORS.length] }}></div>
+                  <span className="text-[10px] font-semibold text-slate-400 capitalize">{d.name.toLowerCase()} ({d.value})</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </section>
+    );
+  };
+
+  const renderActiveVehicles = () => {
+    const vehiclesMap = {};
+    reports.forEach(r => {
+      if (!vehiclesMap[r.vehicle_id]) {
+        vehiclesMap[r.vehicle_id] = {
+          id: r.vehicle_id,
+          last_seen: r.timestamp,
+          last_speed: r.speed_kmph || 0,
+          hazard_count: 0,
+          lat: r.latitude,
+          lon: r.longitude,
+        };
+      }
+      vehiclesMap[r.vehicle_id].hazard_count += r.detections?.length || 0;
+      if (new Date(r.timestamp) > new Date(vehiclesMap[r.vehicle_id].last_seen)) {
+        vehiclesMap[r.vehicle_id].last_seen = r.timestamp;
+        vehiclesMap[r.vehicle_id].last_speed = r.speed_kmph || 0;
+        vehiclesMap[r.vehicle_id].lat = r.latitude;
+        vehiclesMap[r.vehicle_id].lon = r.longitude;
+      }
+    });
+    const vehiclesList = Object.values(vehiclesMap);
+
+    return (
+      <section className="bg-slate-900/40 border border-slate-800/60 p-4 rounded-2xl flex flex-col overflow-hidden min-h-[14rem] max-h-[18rem]">
+        <div className="flex items-center gap-2 text-xs font-bold text-slate-400 mb-3 shrink-0">
+          <Car className="h-4 w-4 text-indigo-400" />
+          <span>ACTIVE TELEMETRY VEHICLES ({vehiclesList.length})</span>
+        </div>
+        <div className="flex-1 overflow-y-auto custom-scrollbar space-y-2 pr-1">
+          {vehiclesList.length === 0 ? (
+            <div className="h-full flex flex-col items-center justify-center text-slate-600 text-xs py-6">
+              No vehicles active.
+            </div>
+          ) : (
+            vehiclesList.map((veh) => (
+              <div
+                key={veh.id}
+                className="bg-slate-950/40 border border-slate-800/80 rounded-xl p-3 flex items-center justify-between"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse shrink-0"></div>
+                  <div className="flex flex-col">
+                    <span className="text-xs font-bold text-slate-200">{veh.id}</span>
+                    <span className="text-[9px] text-slate-500 mt-0.5">
+                      Last speed: {veh.last_speed.toFixed(0)} km/h
+                    </span>
+                  </div>
+                </div>
+                <div className="flex flex-col items-end gap-1">
+                  <span className="text-[10px] text-slate-400 font-semibold bg-slate-900 border border-slate-800 px-2 py-0.5 rounded">
+                    {veh.hazard_count} hazards logged
+                  </span>
+                  <span className="text-[8px] text-slate-600 italic">
+                    Ping: {veh.lat.toFixed(4)}, {veh.lon.toFixed(4)}
+                  </span>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </section>
+    );
+  };
+
+  const renderUserDirectory = () => (
+    <section className="bg-slate-900/40 border border-slate-800/60 p-4 rounded-2xl flex flex-col overflow-hidden min-h-[14rem] max-h-[18rem]">
+      <div className="flex items-center gap-2 text-xs font-bold text-slate-400 mb-3 shrink-0">
+        <Users className="h-4 w-4 text-blue-400" />
+        <span>USER REGISTRY ({adminUsers.length})</span>
+      </div>
+      <div className="flex-1 overflow-y-auto custom-scrollbar space-y-2 pr-1">
+        {adminUsers.length === 0 ? (
+          <p className="text-xs text-slate-600 text-center py-4">No users registered.</p>
+        ) : (
+          adminUsers.map((u) => (
+            <div
+              key={u.id}
+              className="bg-slate-950/40 border border-slate-800/80 rounded-xl p-3 flex items-center justify-between"
+            >
+              <div className="flex flex-col">
+                <span className="text-xs font-bold text-slate-200">{u.username}</span>
+                <span className="text-[9px] text-slate-500 mt-0.5">
+                  Created: {new Date(u.created_at).toLocaleDateString()}
+                </span>
+              </div>
+              <select
+                value={u.role}
+                onChange={(e) => handleUserRoleToggle(u.id, e.target.value)}
+                className="bg-slate-900 border border-slate-800 rounded-lg text-[10px] font-semibold px-2 py-1 text-slate-300 focus:outline-none cursor-pointer"
+              >
+                <option value="admin">Admin</option>
+                <option value="authority">Authority</option>
+                <option value="fleet">Fleet</option>
+              </select>
+            </div>
+          ))
+        )}
+      </div>
+    </section>
+  );
+
+  const renderSystemHealth = () => {
+    if (!systemHealth) return null;
+
+    return (
+      <section className="bg-slate-900/40 border border-slate-800/60 p-4 rounded-2xl flex flex-col gap-3.5 shrink-0">
+        <div className="flex items-center gap-2 text-xs font-bold text-slate-400 shrink-0">
+          <Server className="h-4 w-4 text-emerald-400" />
+          <span>SYSTEM INFRASTRUCTURE HEALTH</span>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <div className="bg-slate-950/40 border border-slate-800/80 rounded-xl p-3 flex flex-col gap-1.5">
+            <div className="flex items-center justify-between text-[9px] uppercase font-bold text-slate-500">
+              <span>CPU LOAD</span>
+              <Cpu className="h-3 w-3 text-blue-400" />
+            </div>
+            <span className="text-sm font-extrabold text-slate-200">{systemHealth.cpu_usage_pct}%</span>
+            <div className="w-full h-1.5 bg-slate-900 rounded-full overflow-hidden">
+              <div className="h-full bg-blue-500 rounded-full" style={{ width: `${systemHealth.cpu_usage_pct}%` }}></div>
+            </div>
+          </div>
+
+          <div className="bg-slate-950/40 border border-slate-800/80 rounded-xl p-3 flex flex-col gap-1.5">
+            <div className="flex items-center justify-between text-[9px] uppercase font-bold text-slate-500">
+              <span>MEMORY</span>
+              <Activity className="h-3 w-3 text-purple-400" />
+            </div>
+            <span className="text-sm font-extrabold text-slate-200">{systemHealth.memory_usage_pct}%</span>
+            <div className="w-full h-1.5 bg-slate-900 rounded-full overflow-hidden">
+              <div className="h-full bg-purple-500 rounded-full" style={{ width: `${systemHealth.memory_usage_pct}%` }}></div>
+            </div>
+          </div>
+
+          <div className="bg-slate-950/40 border border-slate-800/80 rounded-xl p-3 flex flex-col gap-1">
+            <span className="text-[9px] uppercase font-bold text-slate-500">DB CONNS</span>
+            <div className="flex items-baseline gap-1 mt-0.5">
+              <span className="text-sm font-extrabold text-slate-200">
+                {systemHealth.db_active_connections}
+              </span>
+              <span className="text-[10px] text-slate-500">/ {systemHealth.db_max_connections} active</span>
+            </div>
+          </div>
+
+          <div className="bg-slate-950/40 border border-slate-800/80 rounded-xl p-3 flex flex-col gap-1">
+            <span className="text-[9px] uppercase font-bold text-slate-500">DISK STORAGE</span>
+            <div className="flex items-baseline gap-1 mt-0.5 text-xs font-semibold">
+              <span className="text-sm font-extrabold text-slate-200">
+                {systemHealth.disk_used_mb.toFixed(1)} MB
+              </span>
+              <span className="text-[10px] text-slate-500">/ {(systemHealth.disk_total_mb / 1024).toFixed(0)} GB</span>
+            </div>
+          </div>
+        </div>
+      </section>
+    );
+  };
+
+  const renderModelRegistry = () => {
+    const activeModel = systemHealth ? "roadsense-stub-v2" : "offline";
+    const latency = systemHealth ? `${systemHealth.stub_inference_latency_ms}ms` : "N/A";
+
+    return (
+      <section className="bg-slate-900/40 border border-slate-800/60 p-4 rounded-2xl flex flex-col gap-2.5 shrink-0">
+        <div className="flex items-center gap-2 text-xs font-bold text-slate-400">
+          <Compass className="h-4 w-4 text-blue-400" />
+          <span>ACTIVE AI INFERENCE REGISTRY</span>
+        </div>
+        <div className="bg-slate-950/40 border border-slate-800/80 rounded-xl p-3 flex flex-col gap-2">
+          <div className="flex items-center justify-between text-xs">
+            <span className="font-semibold text-slate-400">Active Model:</span>
+            <span className="font-bold text-blue-400 uppercase tracking-wider">{activeModel}</span>
+          </div>
+          <div className="flex items-center justify-between text-xs">
+            <span className="font-semibold text-slate-400">Avg Inference Latency:</span>
+            <span className="font-bold text-slate-200">{latency}</span>
+          </div>
+          <div className="flex items-center justify-between text-xs">
+            <span className="font-semibold text-slate-400">Pipeline Status:</span>
+            <span className="font-bold text-green-400 uppercase tracking-wider">HEALTHY</span>
+          </div>
+        </div>
+      </section>
+    );
+  };
+
+
   return (
     <div className="flex flex-col h-screen w-screen bg-slate-950 text-slate-100 overflow-hidden font-sans">
       {/* Navbar */}
@@ -279,7 +905,7 @@ export default function Dashboard() {
               <span>{error}</span>
             </div>
           )}
-          
+
           {user && (
             <div className="flex items-center gap-3 bg-slate-900 border border-slate-800/80 px-3 py-1.5 rounded-xl">
               <div className="flex flex-col text-right">
@@ -309,10 +935,10 @@ export default function Dashboard() {
 
       {/* Main Body Layout */}
       <div className="flex flex-1 overflow-hidden p-6 gap-6">
-        
+
         {/* Left Side: Sidebar Controls, Stats, Upload, Lists */}
         <div className="w-[32rem] flex flex-col gap-5 shrink-0 overflow-y-auto custom-scrollbar pr-1">
-          
+
           {/* Stats Section */}
           <section className="grid grid-cols-3 gap-3 shrink-0">
             <div className="bg-slate-900/50 border border-slate-800/80 p-3 rounded-2xl flex flex-col justify-between">
@@ -338,201 +964,32 @@ export default function Dashboard() {
             </div>
           </section>
 
-          {/* Filters & Control Panel */}
-          <section className="bg-slate-900/40 border border-slate-800/60 p-4 rounded-2xl flex flex-col gap-3 shrink-0">
-            <div className="flex items-center gap-2 text-xs font-bold text-slate-400">
-              <Sliders className="h-4 w-4" />
-              <span>DASHBOARD FILTERS</span>
-            </div>
+          {/* Conditional Role-based layouts */}
+          {user?.role === "authority" && (
+            <>
+              {renderFilters()}
+              {renderPendingRepairQueue()}
+              {renderAnalyticsCharts()}
+            </>
+          )}
 
-            {/* Severity Filter */}
-            <div className="flex flex-col gap-1.5 mt-1">
-              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wide">Severity Toggles:</span>
-              <div className="flex gap-2">
-                {Object.keys(severityFilter).map((sev) => (
-                  <button
-                    key={sev}
-                    onClick={() => setSeverityFilter(prev => ({ ...prev, [sev]: !prev[sev] }))}
-                    className={`flex-1 py-1.5 px-3 text-xs font-semibold rounded-xl border transition cursor-pointer capitalize ${
-                      severityFilter[sev]
-                        ? sev === "high"
-                          ? "bg-red-500/10 text-red-400 border-red-500/40"
-                          : sev === "medium"
-                          ? "bg-orange-500/10 text-orange-400 border-orange-500/40"
-                          : "bg-green-500/10 text-green-400 border-green-500/40"
-                        : "bg-slate-950/20 text-slate-500 border-slate-800 hover:border-slate-700"
-                    }`}
-                  >
-                    {sev}
-                  </button>
-                ))}
-              </div>
-            </div>
+          {user?.role === "fleet" && (
+            <>
+              {renderFilters()}
+              {renderTelemetryUpload()}
+              {renderActiveVehicles()}
+              {renderReportLogs()}
+            </>
+          )}
 
-            {/* Class Filter */}
-            <div className="flex flex-col gap-1.5 mt-1">
-              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wide">Hazard Type:</span>
-              <div className="flex gap-2">
-                {["all", "pothole", "crack"].map((cls) => (
-                  <button
-                    key={cls}
-                    onClick={() => setClassFilter(cls)}
-                    className={`flex-1 py-1.5 px-3 text-xs font-semibold rounded-xl border transition cursor-pointer capitalize ${
-                      classFilter === cls
-                        ? "bg-blue-600/20 text-blue-400 border-blue-500/40"
-                        : "bg-slate-950/20 text-slate-500 border-slate-800 hover:border-slate-700"
-                    }`}
-                  >
-                    {cls === "all" ? "All Hazards" : cls + "s"}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Status Filter */}
-            <div className="flex flex-col gap-1.5 mt-1">
-              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wide">Status Filter:</span>
-              <select
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value)}
-                className="bg-slate-950 border border-slate-800 rounded-xl text-xs p-2 text-slate-300 focus:outline-none focus:border-blue-500 w-full"
-              >
-                <option value="all">All Statuses</option>
-                <option value="detected">Detected</option>
-                <option value="verified">Verified</option>
-                <option value="assigned">Assigned</option>
-                <option value="inspection">Inspection</option>
-                <option value="repair">Repair</option>
-                <option value="completed">Completed</option>
-                <option value="closed">Closed</option>
-              </select>
-            </div>
-          </section>
-
-          {/* Quick Demo Image Upload Widget */}
-          <section className="bg-slate-900/40 border border-slate-800/60 p-4 rounded-2xl flex flex-col gap-3 shrink-0">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2 text-xs font-bold text-slate-400">
-                <Upload className="h-4 w-4" />
-                <span>DEMO TELEMETRY UPLOAD</span>
-              </div>
-              {uploading && (
-                <span className="text-[10px] text-blue-400 animate-pulse font-bold">Uploading...</span>
-              )}
-            </div>
-
-            <label className={`w-full h-24 rounded-2xl border border-dashed border-slate-800 bg-slate-950/30 flex flex-col items-center justify-center cursor-pointer transition duration-150 relative ${uploading ? "opacity-50 pointer-events-none" : "hover:border-blue-500/50 hover:bg-slate-900/30"}`}>
-              <input
-                type="file"
-                accept="image/*"
-                onChange={handleImageUpload}
-                className="hidden"
-                disabled={uploading}
-              />
-              <Upload className="h-5 w-5 text-slate-500 mb-1.5" />
-              <span className="text-xs text-slate-400 font-semibold text-center">Click to upload road image</span>
-              <span className="text-[9px] text-slate-600 text-center mt-0.5">Mock GPS tags Mumbai area on map</span>
-            </label>
-          </section>
-
-          {/* Table List View of Reports */}
-          <section className="flex-1 bg-slate-900/40 border border-slate-800/60 p-4 rounded-2xl flex flex-col overflow-hidden min-h-[16rem]">
-            <div className="flex items-center justify-between mb-3 shrink-0">
-              <div className="flex items-center gap-2 text-xs font-bold text-slate-400">
-                <FileSpreadsheet className="h-4 w-4" />
-                <span>REPORT LOGS ({filteredReports.length})</span>
-              </div>
-            </div>
-
-            {/* List container */}
-            <div className="flex-1 overflow-y-auto custom-scrollbar space-y-2 pr-1">
-              {filteredReports.length === 0 ? (
-                <div className="h-full flex flex-col items-center justify-center text-slate-600 text-xs py-8">
-                  <CheckCircle className="h-8 w-8 mb-2 opacity-30 text-green-500" />
-                  No reports matching current filters.
-                </div>
-              ) : (
-                filteredReports.map((report) => {
-                  const severities = report.detections?.map((d) => d.severity.toLowerCase()) || [];
-                  let maxSeverity = "low";
-                  if (severities.includes("high")) maxSeverity = "high";
-                  else if (severities.includes("medium")) maxSeverity = "medium";
-
-                  return (
-                    <div
-                      key={report.id}
-                      className="bg-slate-950/40 hover:bg-slate-900/30 border border-slate-800/80 hover:border-slate-700/60 rounded-xl p-3 flex items-center justify-between transition duration-150 gap-3"
-                    >
-                      <div className="flex flex-col gap-0.5 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs font-bold text-slate-100 truncate">
-                            Vehicle: {report.vehicle_id}
-                          </span>
-                          <span
-                            className={`text-[9px] font-extrabold uppercase px-1.5 py-0.5 rounded-full shrink-0 border ${
-                              maxSeverity === "high"
-                                ? "bg-red-500/10 text-red-400 border-red-500/20"
-                                : maxSeverity === "medium"
-                                ? "bg-orange-500/10 text-orange-400 border-orange-500/20"
-                                : "bg-green-500/10 text-green-400 border-green-500/20"
-                            }`}
-                          >
-                            {maxSeverity}
-                          </span>
-                          <span
-                            className={`text-[8px] font-extrabold uppercase px-1.5 py-0.5 rounded-full shrink-0 border ${
-                              (report.status || "detected").toLowerCase() === "verified"
-                                ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
-                                : (report.status || "detected").toLowerCase() === "assigned"
-                                ? "bg-indigo-500/10 text-indigo-400 border-indigo-500/20"
-                                : (report.status || "detected").toLowerCase() === "inspection"
-                                ? "bg-amber-500/10 text-amber-400 border-amber-500/20"
-                                : (report.status || "detected").toLowerCase() === "repair"
-                                ? "bg-orange-500/10 text-orange-400 border-orange-500/20"
-                                : (report.status || "detected").toLowerCase() === "completed"
-                                ? "bg-teal-500/10 text-teal-400 border-teal-500/20"
-                                : (report.status || "detected").toLowerCase() === "closed"
-                                ? "bg-rose-500/10 text-rose-400 border-rose-500/20"
-                                : "bg-slate-800 text-slate-400 border-slate-700"
-                            }`}
-                          >
-                            {report.status || "detected"}
-                          </span>
-                          {report.model_version && (
-                            <span className="text-[9px] text-blue-400 font-bold bg-blue-950/40 border border-blue-900/40 px-1.5 py-0.5 rounded-full shrink-0 uppercase tracking-wide">
-                              {report.model_version.split("-").pop()}
-                            </span>
-                          )}
-                        </div>
-                        <div className="text-[10px] text-slate-500 flex items-center gap-1.5 mt-0.5">
-                          <Calendar className="h-3 w-3 shrink-0" />
-                          <span>
-                            {new Date(report.timestamp).toLocaleString([], {
-                              month: "short",
-                              day: "numeric",
-                              hour: "2-digit",
-                              minute: "2-digit",
-                             })}
-                          </span>
-                        </div>
-                      </div>
-
-                      <div className="flex flex-col items-end gap-1 shrink-0">
-                        <div className="text-[10px] text-slate-400 font-bold bg-slate-900 border border-slate-800 px-2 py-0.5 rounded">
-                          {report.detections?.length || 0} Detections
-                        </div>
-                        <span className="text-[9px] text-slate-600 italic truncate">
-                          Lat: {report.latitude.toFixed(4)}, Lon: {report.longitude.toFixed(4)}
-                          {report.speed_kmph !== undefined && report.speed_kmph !== null && ` | ${report.speed_kmph} km/h`}
-                        </span>
-                      </div>
-
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          </section>
+          {user?.role === "admin" && (
+            <>
+              {renderUserDirectory()}
+              {renderSystemHealth()}
+              {renderModelRegistry()}
+              {renderTelemetryUpload()}
+            </>
+          )}
 
         </div>
 
@@ -563,6 +1020,5 @@ export default function Dashboard() {
         </div>
       )}
     </div>
-
   );
 }

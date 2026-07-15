@@ -90,3 +90,116 @@ def test_role_restrictions():
         repair_payload = {"issue_id": "some-id", "status": "verified"}
         res = client.post("/repair", json=repair_payload)
         assert res.status_code == 403
+
+
+def test_admin_and_analytics_endpoints():
+    from database import SessionLocal
+    import models
+    import auth
+
+    # Ensure database has test_admin, test_fleet, and test_officer
+    db = SessionLocal()
+    if not db.query(models.User).filter(models.User.username == "test_admin").first():
+        db.add(
+            models.User(
+                username="test_admin",
+                hashed_password=auth.hash_password("password"),
+                role="admin",
+            )
+        )
+    if not db.query(models.User).filter(models.User.username == "test_fleet").first():
+        db.add(
+            models.User(
+                username="test_fleet",
+                hashed_password=auth.hash_password("password"),
+                role="fleet",
+            )
+        )
+    if not db.query(models.User).filter(models.User.username == "test_officer").first():
+        db.add(
+            models.User(
+                username="test_officer",
+                hashed_password=auth.hash_password("password"),
+                role="authority",
+            )
+        )
+    db.commit()
+    db.close()
+
+    # 1. Test /analytics (accessible to any logged-in user)
+    with TestClient(app) as client:
+        token = auth.create_access_token(data={"sub": "test_fleet"})
+        client.cookies.set("access_token", token)
+        res = client.get("/analytics")
+        assert res.status_code == 200
+        data = res.json()
+        assert "time_series" in data
+        assert "severity_distribution" in data
+
+    # 2. Test /admin/users and /admin/system-health as admin (should succeed)
+    with TestClient(app) as client:
+        token = auth.create_access_token(data={"sub": "test_admin"})
+        client.cookies.set("access_token", token)
+
+        res = client.get("/admin/users")
+        assert res.status_code == 200
+        assert len(res.json()) >= 3
+
+        res = client.get("/admin/system-health")
+        assert res.status_code == 200
+        assert res.json()["cpu_usage_pct"] == 34.5
+
+    # 3. Test /admin/users and /admin/system-health as fleet (should fail with 403)
+    with TestClient(app) as client:
+        token = auth.create_access_token(data={"sub": "test_fleet"})
+        client.cookies.set("access_token", token)
+
+        res = client.get("/admin/users")
+        assert res.status_code == 403
+
+        res = client.get("/admin/system-health")
+        assert res.status_code == 403
+
+    # 4. Test /admin/users and /admin/system-health as authority (should fail with 403)
+    with TestClient(app) as client:
+        token = auth.create_access_token(data={"sub": "test_officer"})
+        client.cookies.set("access_token", token)
+
+        res = client.get("/admin/users")
+        assert res.status_code == 403
+
+        res = client.get("/admin/system-health")
+        assert res.status_code == 403
+
+    # 5. Test user role update (POST /admin/users/role)
+    db = SessionLocal()
+    fleet_user = (
+        db.query(models.User).filter(models.User.username == "test_fleet").first()
+    )
+    fleet_user_id = fleet_user.id
+    db.close()
+
+    # Fleet operator trying to change roles (Forbidden)
+    with TestClient(app) as client:
+        token = auth.create_access_token(data={"sub": "test_officer"})
+        client.cookies.set("access_token", token)
+        res = client.post(
+            "/admin/users/role", json={"user_id": fleet_user_id, "role": "admin"}
+        )
+        assert res.status_code == 403
+
+    # Admin changing role of fleet user to authority (Succeeds)
+    with TestClient(app) as client:
+        token = auth.create_access_token(data={"sub": "test_admin"})
+        client.cookies.set("access_token", token)
+        res = client.post(
+            "/admin/users/role", json={"user_id": fleet_user_id, "role": "authority"}
+        )
+        assert res.status_code == 200
+
+        # Verify role indeed updated
+        res_users = client.get("/admin/users")
+        updated_fleet = next(
+            u for u in res_users.json() if u["username"] == "test_fleet"
+        )
+        assert updated_fleet["role"] == "authority"

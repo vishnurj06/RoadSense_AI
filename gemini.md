@@ -41,7 +41,7 @@ This file tracks the project state, architectural decisions, completed tasks, an
 | **B-2** | PostGIS + real duplicate verification (`POST /verify`) | Completed | `ST_DWithin` spatial clustering of mixed classes within 20m, map confirmation badges. |
 | **B-3** | Repair workflow (`POST /repair` + status updates + audit log) | Completed | Issue status transitions, rich audit logs, map popup dropdowns, and status filtering. |
 | **B-4** | Auth & Roles (JWT, bcrypt/argon2, role-based dependencies) | Completed | JWT cookies, bcrypt hashing, role checks, glassmorphic login page with presets. |
-| **B-5** | Dashboards (Authority, Fleet, Admin views & charts) | Planned | Analytics feeds, user/model management. |
+| **B-5** | Dashboards (Authority, Fleet, Admin views & charts) | Completed | Swapped sidebar views, integrated Recharts, and admin controls. |
 | **B-6** | Production hardening (S3/MinIO, Redis, marker local pinning) | Planned | Caching `/map`, pagination, pagination on `/reports`. |
 
 ---
@@ -53,6 +53,6 @@ This file tracks the project state, architectural decisions, completed tasks, an
 - **Next.js Port:** `http://localhost:3000`
 
 ## 4. Verification & Testing Status
-- **Automated Tests:** 15 automated tests in `backend/test_api.py`, `backend/test_detect_image.py`, `backend/test_stub.py`, `backend/test_repair.py`, and `backend/test_auth.py` covering auth limits, state workflows, stub inference, upload pipelines, and spatial clustering are **PASSING**.
+- **Automated Tests:** 16 automated tests in `backend/test_api.py`, `backend/test_detect_image.py`, `backend/test_stub.py`, `backend/test_repair.py`, and `backend/test_auth.py` covering auth limits, state workflows, stub inference, upload pipelines, and spatial clustering are **PASSING**.
 
 

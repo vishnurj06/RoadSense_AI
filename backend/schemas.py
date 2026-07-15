@@ -119,3 +119,8 @@ class UserResponse(BaseModel):
     username: str
     role: str
     created_at: datetime
+
+
+class UserRoleUpdate(BaseModel):
+    user_id: str
+    role: str = Field(..., pattern="^(admin|authority|fleet)$")
