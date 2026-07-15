@@ -51,7 +51,10 @@ def client():
         yield c
 
 
-@patch("s3_storage.upload_image_bytes_to_s3", return_value="http://minio/roadsense/test.jpg")
+@patch(
+    "s3_storage.upload_image_bytes_to_s3",
+    return_value="http://minio/roadsense/test.jpg",
+)
 @patch("httpx.AsyncClient.post", new_callable=AsyncMock)
 def test_detect_image_success(mock_post, mock_s3, client):
     # Setup mock response from inference service
@@ -99,7 +102,10 @@ def test_detect_image_success(mock_post, mock_s3, client):
     assert res_json["detections"][0]["severity"] == "high"
 
 
-@patch("s3_storage.upload_image_bytes_to_s3", return_value="http://minio/roadsense/test.jpg")
+@patch(
+    "s3_storage.upload_image_bytes_to_s3",
+    return_value="http://minio/roadsense/test.jpg",
+)
 @patch("httpx.AsyncClient.post", new_callable=AsyncMock)
 def test_detect_image_inference_down(mock_post, mock_s3, client):
     # Setup mock exception for unreachable inference service
@@ -120,7 +126,10 @@ def test_detect_image_inference_down(mock_post, mock_s3, client):
     assert "Inference service is unreachable" in response.json()["detail"]
 
 
-@patch("s3_storage.upload_image_bytes_to_s3", return_value="http://minio/roadsense/test.jpg")
+@patch(
+    "s3_storage.upload_image_bytes_to_s3",
+    return_value="http://minio/roadsense/test.jpg",
+)
 @patch("httpx.AsyncClient.post", new_callable=AsyncMock)
 def test_detect_image_inference_fails(mock_post, mock_s3, client):
     # Setup mock response indicating server error (500)

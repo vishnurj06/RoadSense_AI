@@ -124,7 +124,10 @@ def test_get_analytics(client):
     assert analytics["severity_distribution"]["high"] >= 1
 
 
-@patch("s3_storage.upload_image_bytes_to_s3", return_value="http://minio/roadsense/test_image.png")
+@patch(
+    "s3_storage.upload_image_bytes_to_s3",
+    return_value="http://minio/roadsense/test_image.png",
+)
 def test_upload_image(mock_s3, client):
     # Create dummy file content
     file_content = b"fake image content"
