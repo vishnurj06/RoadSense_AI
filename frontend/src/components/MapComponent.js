@@ -83,14 +83,16 @@ const getStatusStyle = (status) => {
   }
 };
 
-export default function MapComponent({ reports, onRefresh }) {
-  const [statusInput, setStatusInput] = useState("");
+function IssuePopupContent({ report, onRefresh }) {
+  const currentStatus = report.status || "detected";
+  const validNextStates = statusTransitionMap[currentStatus.toLowerCase()] || [];
+
+  const [statusInput, setStatusInput] = useState(validNextStates[0] || "");
   const [notesInput, setNotesInput] = useState("");
-  const [updatingId, setUpdatingId] = useState(null);
+  const [updating, setUpdating] = useState(false);
   const [updateError, setUpdateError] = useState("");
 
-  const handleStatusSubmit = async (issueId, currentStatus) => {
-    const validNextStates = statusTransitionMap[currentStatus] || [];
+  const handleStatusSubmit = async () => {
     const targetStatus = statusInput || validNextStates[0];
     if (!targetStatus) {
       setUpdateError("No valid next status available.");
@@ -98,16 +100,16 @@ export default function MapComponent({ reports, onRefresh }) {
     }
 
     try {
-      setUpdatingId(issueId);
+      setUpdating(true);
       setUpdateError("");
       const res = await fetch(`${BACKEND_URL}/repair`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          issue_id: issueId,
+          issue_id: report.id,
           status: targetStatus,
-          notes: notesInput
-        })
+          notes: notesInput,
+        }),
       });
 
       if (!res.ok) {
@@ -115,10 +117,9 @@ export default function MapComponent({ reports, onRefresh }) {
         throw new Error(errJson.detail || "Failed to update status.");
       }
 
-      // Success: clear inputs
-      setStatusInput("");
+      // Success: clear notes
       setNotesInput("");
-      
+
       if (onRefresh) {
         await onRefresh();
       }
@@ -126,11 +127,156 @@ export default function MapComponent({ reports, onRefresh }) {
       console.error(err);
       setUpdateError(err.message || "Failed to update status.");
     } finally {
-      setUpdatingId(null);
+      setUpdating(false);
     }
   };
+
+  // Find maximum severity among detections
+  const severities = report.detections?.map((d) => d.severity.toLowerCase()) || [];
+  let maxSeverity = "low";
+  if (severities.includes("high")) maxSeverity = "high";
+  else if (severities.includes("medium")) maxSeverity = "medium";
+
+  // Fallback image url
+  const imageUrl = report.image_url
+    ? report.image_url.startsWith("http")
+      ? report.image_url
+      : `${BACKEND_URL}${report.image_url}`
+    : null;
+
+  return (
+    <div className="flex flex-col w-64 p-1 font-sans text-slate-100">
+      {imageUrl ? (
+        <div className="w-full h-32 rounded-lg overflow-hidden mb-2 bg-slate-900 border border-slate-700 relative">
+          <img
+            src={imageUrl}
+            alt="Detection Thumbnail"
+            className="w-full h-full object-cover"
+            onError={(e) => {
+              e.target.onerror = null;
+              e.target.src =
+                "https://images.unsplash.com/photo-1515162305285-0293e4767cc2?q=80&w=400";
+            }}
+          />
+        </div>
+      ) : (
+        <div className="w-full h-32 rounded-lg bg-slate-900 border border-slate-700 flex items-center justify-center mb-2 text-slate-500 text-xs">
+          No Image Available
+        </div>
+      )}
+
+      <div className="flex items-center justify-between mb-1.5">
+        <span
+          className={`text-xs font-semibold px-2 py-0.5 rounded-full uppercase tracking-wider ${
+            maxSeverity === "high"
+              ? "bg-red-500/20 text-red-400 border border-red-500/30"
+              : maxSeverity === "medium"
+              ? "bg-orange-500/20 text-orange-400 border border-orange-500/30"
+              : "bg-green-500/20 text-green-400 border border-green-500/30"
+          }`}
+        >
+          {maxSeverity} severity
+        </span>
+        <span className="text-[10px] text-slate-400">
+          {new Date(report.timestamp).toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+          })}
+        </span>
+      </div>
+
+      <div className="text-xs text-slate-300 font-medium mb-1 truncate">
+        Vehicle: <span className="text-slate-100 font-semibold">{report.vehicle_id}</span>
+      </div>
+
+      {report.speed_kmph !== undefined && report.speed_kmph !== null && (
+        <div className="text-xs text-slate-300 font-medium mb-1 truncate">
+          Speed: <span className="text-slate-100 font-semibold">{report.speed_kmph} km/h</span>
+        </div>
+      )}
+
+      {report.model_version && (
+        <div className="text-xs text-slate-300 font-medium mb-1 truncate">
+          Model: <span className="text-slate-100 font-semibold">{report.model_version}</span>
+        </div>
+      )}
+
+      <div className="border-t border-slate-800 my-1.5 pt-1.5">
+        <div className="text-[11px] font-bold text-slate-400 mb-1">Detections:</div>
+        <div className="space-y-1 max-h-24 overflow-y-auto pr-1">
+          {report.detections?.map((d) => (
+            <div
+              key={d.id}
+              className="flex justify-between items-center text-xs bg-slate-900/50 p-1.5 rounded border border-slate-800"
+            >
+              <span className="capitalize text-slate-200 font-medium">{d.class}</span>
+              <span className="text-slate-400 font-semibold">
+                {(d.confidence * 100).toFixed(0)}% conf
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Status workflow updater */}
+      <div className="border-t border-slate-800 my-2 pt-2 flex flex-col gap-2">
+        <div className="flex items-center justify-between">
+          <span className="text-[11px] font-bold text-slate-400">Status Workflow:</span>
+          <span
+            className={`text-[9px] font-extrabold uppercase px-2 py-0.5 rounded-full border ${getStatusStyle(
+              currentStatus
+            )}`}
+          >
+            {currentStatus}
+          </span>
+        </div>
+
+        {validNextStates.length > 0 ? (
+          <div className="flex flex-col gap-1.5 mt-0.5">
+            <select
+              value={statusInput}
+              onChange={(e) => setStatusInput(e.target.value)}
+              className="bg-slate-900 border border-slate-700/60 rounded-lg text-[11px] p-1.5 text-slate-100 focus:outline-none focus:border-blue-500 select-none"
+            >
+              {validNextStates.map((state) => (
+                <option key={state} value={state} className="capitalize">
+                  {state}
+                </option>
+              ))}
+            </select>
+            <input
+              type="text"
+              placeholder="Audit comment..."
+              value={notesInput}
+              onChange={(e) => setNotesInput(e.target.value)}
+              className="bg-slate-900 border border-slate-700/60 rounded-lg text-[11px] p-1.5 text-slate-100 focus:outline-none focus:border-blue-500"
+            />
+            {updateError && (
+              <span className="text-[10px] text-red-400 font-medium">{updateError}</span>
+            )}
+            <button
+              onClick={handleStatusSubmit}
+              disabled={updating}
+              className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-bold text-[11px] py-1.5 px-3 rounded-lg mt-0.5 cursor-pointer select-none transition duration-150"
+            >
+              {updating ? "Updating..." : "Update Status"}
+            </button>
+          </div>
+        ) : (
+          <span className="text-[10px] text-slate-500 italic mt-0.5">Workflow completed</span>
+        )}
+      </div>
+
+      <div className="text-[9px] text-slate-500 mt-2 text-right italic">
+        ID: {report.id.substring(0, 8)}...
+      </div>
+    </div>
+  );
+}
+
+export default function MapComponent({ reports, onRefresh }) {
   // Mumbai default center
-  const defaultCenter = [19.0760, 72.8777];
+  const defaultCenter = [19.076, 72.8777];
 
   return (
     <div className="w-full h-full rounded-2xl overflow-hidden shadow-2xl border border-slate-800 relative z-10">
@@ -151,13 +297,6 @@ export default function MapComponent({ reports, onRefresh }) {
           if (severities.includes("high")) maxSeverity = "high";
           else if (severities.includes("medium")) maxSeverity = "medium";
 
-          // Fallback image url
-          const imageUrl = report.image_url
-            ? report.image_url.startsWith("http")
-              ? report.image_url
-              : `${BACKEND_URL}${report.image_url}`
-            : null;
-
           return (
             <Marker
               key={report.id}
@@ -165,123 +304,7 @@ export default function MapComponent({ reports, onRefresh }) {
               icon={createMarkerIcon(maxSeverity, report.detection_count)}
             >
               <Popup className="roadsense-popup">
-                <div className="flex flex-col w-64 p-1 font-sans text-slate-100">
-                  {imageUrl ? (
-                    <div className="w-full h-32 rounded-lg overflow-hidden mb-2 bg-slate-900 border border-slate-700 relative">
-                      <img
-                        src={imageUrl}
-                        alt="Detection Thumbnail"
-                        className="w-full h-full object-cover"
-                        onError={(e) => {
-                          e.target.onerror = null;
-                          e.target.src = "https://images.unsplash.com/photo-1515162305285-0293e4767cc2?q=80&w=400";
-                        }}
-                      />
-                    </div>
-                  ) : (
-                    <div className="w-full h-32 rounded-lg bg-slate-900 border border-slate-700 flex items-center justify-center mb-2 text-slate-500 text-xs">
-                      No Image Available
-                    </div>
-                  )}
-
-                  <div className="flex items-center justify-between mb-1.5">
-                    <span
-                      className={`text-xs font-semibold px-2 py-0.5 rounded-full uppercase tracking-wider ${
-                        maxSeverity === "high"
-                          ? "bg-red-500/20 text-red-400 border border-red-500/30"
-                          : maxSeverity === "medium"
-                          ? "bg-orange-500/20 text-orange-400 border border-orange-500/30"
-                          : "bg-green-500/20 text-green-400 border border-green-500/30"
-                      }`}
-                    >
-                      {maxSeverity} severity
-                    </span>
-                    <span className="text-[10px] text-slate-400">
-                      {new Date(report.timestamp).toLocaleTimeString([], {
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      })}
-                    </span>
-                  </div>
-
-                  <div className="text-xs text-slate-300 font-medium mb-1 truncate">
-                    Vehicle: <span className="text-slate-100 font-semibold">{report.vehicle_id}</span>
-                  </div>
-
-                  {report.speed_kmph !== undefined && report.speed_kmph !== null && (
-                    <div className="text-xs text-slate-300 font-medium mb-1 truncate">
-                      Speed: <span className="text-slate-100 font-semibold">{report.speed_kmph} km/h</span>
-                    </div>
-                  )}
-
-                  {report.model_version && (
-                    <div className="text-xs text-slate-300 font-medium mb-1 truncate">
-                      Model: <span className="text-slate-100 font-semibold">{report.model_version}</span>
-                    </div>
-                  )}
-
-
-                  <div className="border-t border-slate-800 my-1.5 pt-1.5">
-                    <div className="text-[11px] font-bold text-slate-400 mb-1">Detections:</div>
-                    <div className="space-y-1 max-h-24 overflow-y-auto pr-1">
-                      {report.detections?.map((d) => (
-                        <div key={d.id} className="flex justify-between items-center text-xs bg-slate-900/50 p-1.5 rounded border border-slate-800">
-                          <span className="capitalize text-slate-200 font-medium">{d.class}</span>
-                          <span className="text-slate-400 font-semibold">{(d.confidence * 100).toFixed(0)}% conf</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Status workflow updater */}
-                  <div className="border-t border-slate-800 my-2 pt-2 flex flex-col gap-2">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[11px] font-bold text-slate-400">Status Workflow:</span>
-                      <span className={`text-[9px] font-extrabold uppercase px-2 py-0.5 rounded-full border ${getStatusStyle(report.status)}`}>
-                        {report.status || "detected"}
-                      </span>
-                    </div>
-
-                    {((statusTransitionMap[(report.status || "detected").toLowerCase()]) || []).length > 0 ? (
-                      <div className="flex flex-col gap-1.5 mt-0.5">
-                        <select
-                          value={statusInput || ((statusTransitionMap[(report.status || "detected").toLowerCase()]) || [])[0]}
-                          onChange={(e) => setStatusInput(e.target.value)}
-                          className="bg-slate-900 border border-slate-700/60 rounded-lg text-[11px] p-1.5 text-slate-100 focus:outline-none focus:border-blue-500 select-none"
-                        >
-                          {((statusTransitionMap[(report.status || "detected").toLowerCase()]) || []).map((state) => (
-                            <option key={state} value={state} className="capitalize">
-                              {state}
-                            </option>
-                          ))}
-                        </select>
-                        <input
-                          type="text"
-                          placeholder="Audit comment..."
-                          value={notesInput}
-                          onChange={(e) => setNotesInput(e.target.value)}
-                          className="bg-slate-900 border border-slate-700/60 rounded-lg text-[11px] p-1.5 text-slate-100 focus:outline-none focus:border-blue-500"
-                        />
-                        {updateError && (
-                          <span className="text-[10px] text-red-400 font-medium">{updateError}</span>
-                        )}
-                        <button
-                          onClick={() => handleStatusSubmit(report.id, report.status || "detected")}
-                          disabled={updatingId === report.id}
-                          className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-bold text-[11px] py-1.5 px-3 rounded-lg mt-0.5 cursor-pointer select-none transition duration-150"
-                        >
-                          {updatingId === report.id ? "Updating..." : "Update Status"}
-                        </button>
-                      </div>
-                    ) : (
-                      <span className="text-[10px] text-slate-500 italic mt-0.5">Workflow completed</span>
-                    )}
-                  </div>
-
-                  <div className="text-[9px] text-slate-500 mt-2 text-right italic">
-                    ID: {report.id.substring(0, 8)}...
-                  </div>
-                </div>
+                <IssuePopupContent report={report} onRefresh={onRefresh} />
               </Popup>
             </Marker>
           );

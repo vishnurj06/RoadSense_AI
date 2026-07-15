@@ -39,7 +39,7 @@ This file tracks the project state, architectural decisions, completed tasks, an
 | **B-0** | Build the stub inference service (`backend/stub_infer.py`) | Completed | Port 8001, serves `POST /infer` with dynamic image sizes. |
 | **B-1** | Real upload flow (`POST /detect-image` & Next.js integration) | Completed | Saves image, calls `INFERENCE_URL` asynchronously, triggers sliding toasts. |
 | **B-2** | PostGIS + real duplicate verification (`POST /verify`) | Completed | `ST_DWithin` spatial clustering of mixed classes within 20m, map confirmation badges. |
-| **B-3** | Repair workflow (`POST /repair` + status updates + audit log) | Planned | Issue status transitions & audit logging. |
+| **B-3** | Repair workflow (`POST /repair` + status updates + audit log) | Completed | Issue status transitions, rich audit logs, map popup dropdowns, and status filtering. |
 | **B-4** | Auth & roles (JWT, bcrypt/argon2, role-based dependencies) | Planned | Protect mutating endpoints, login/register views. |
 | **B-5** | Dashboards (Authority, Fleet, Admin views & charts) | Planned | Analytics feeds, user/model management. |
 | **B-6** | Production hardening (S3/MinIO, Redis, marker local pinning) | Planned | Caching `/map`, pagination, pagination on `/reports`. |
