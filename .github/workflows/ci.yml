@@ -37,7 +37,7 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install ruff pytest httpx fastapi uvicorn sqlalchemy psycopg2-binary pydantic python-multipart
+        pip install -r backend/requirements.txt
 
     - name: Run Ruff Lint check
       run: ruff check backend/
@@ -50,4 +50,4 @@ jobs:
         DATABASE_URL: postgresql://postgres:postgres@localhost:5432/roadsense
       run: |
         cd backend
-        pytest test_api.py
+        pytest
