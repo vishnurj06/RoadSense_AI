@@ -1,5 +1,6 @@
 import os
 import pytest
+from unittest.mock import patch
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -123,7 +124,8 @@ def test_get_analytics(client):
     assert analytics["severity_distribution"]["high"] >= 1
 
 
-def test_upload_image(client):
+@patch("s3_storage.upload_image_bytes_to_s3", return_value="http://minio/roadsense/test_image.png")
+def test_upload_image(mock_s3, client):
     # Create dummy file content
     file_content = b"fake image content"
     files = {"file": ("test_image.png", file_content, "image/png")}
