@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useState } from "react";
 import { MapContainer, TileLayer, Marker, Popup } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
@@ -51,7 +51,84 @@ const createMarkerIcon = (severity, detectionCount = 1) => {
 
 const BACKEND_URL = "http://localhost:8000";
 
-export default function MapComponent({ reports }) {
+const statusTransitionMap = {
+  detected: ["verified", "closed"],
+  verified: ["assigned", "closed"],
+  assigned: ["inspection", "repair", "verified"],
+  inspection: ["repair", "assigned"],
+  repair: ["completed"],
+  completed: ["closed", "repair"],
+  closed: ["detected"]
+};
+
+const getStatusStyle = (status) => {
+  const statusLower = (status || "detected").toLowerCase();
+  switch (statusLower) {
+    case "detected":
+      return "bg-slate-800 text-slate-300 border-slate-700";
+    case "verified":
+      return "bg-emerald-500/20 text-emerald-400 border-emerald-500/30";
+    case "assigned":
+      return "bg-indigo-500/20 text-indigo-400 border-indigo-500/30";
+    case "inspection":
+      return "bg-amber-500/20 text-amber-400 border-amber-500/30";
+    case "repair":
+      return "bg-orange-500/20 text-orange-400 border-orange-500/30";
+    case "completed":
+      return "bg-teal-500/20 text-teal-400 border-teal-500/30";
+    case "closed":
+      return "bg-rose-500/20 text-rose-400 border-rose-500/30";
+    default:
+      return "bg-slate-800 text-slate-300 border-slate-700";
+  }
+};
+
+export default function MapComponent({ reports, onRefresh }) {
+  const [statusInput, setStatusInput] = useState("");
+  const [notesInput, setNotesInput] = useState("");
+  const [updatingId, setUpdatingId] = useState(null);
+  const [updateError, setUpdateError] = useState("");
+
+  const handleStatusSubmit = async (issueId, currentStatus) => {
+    const validNextStates = statusTransitionMap[currentStatus] || [];
+    const targetStatus = statusInput || validNextStates[0];
+    if (!targetStatus) {
+      setUpdateError("No valid next status available.");
+      return;
+    }
+
+    try {
+      setUpdatingId(issueId);
+      setUpdateError("");
+      const res = await fetch(`${BACKEND_URL}/repair`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          issue_id: issueId,
+          status: targetStatus,
+          notes: notesInput
+        })
+      });
+
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.detail || "Failed to update status.");
+      }
+
+      // Success: clear inputs
+      setStatusInput("");
+      setNotesInput("");
+      
+      if (onRefresh) {
+        await onRefresh();
+      }
+    } catch (err) {
+      console.error(err);
+      setUpdateError(err.message || "Failed to update status.");
+    } finally {
+      setUpdatingId(null);
+    }
+  };
   // Mumbai default center
   const defaultCenter = [19.0760, 72.8777];
 
@@ -154,6 +231,51 @@ export default function MapComponent({ reports }) {
                         </div>
                       ))}
                     </div>
+                  </div>
+
+                  {/* Status workflow updater */}
+                  <div className="border-t border-slate-800 my-2 pt-2 flex flex-col gap-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-bold text-slate-400">Status Workflow:</span>
+                      <span className={`text-[9px] font-extrabold uppercase px-2 py-0.5 rounded-full border ${getStatusStyle(report.status)}`}>
+                        {report.status || "detected"}
+                      </span>
+                    </div>
+
+                    {((statusTransitionMap[(report.status || "detected").toLowerCase()]) || []).length > 0 ? (
+                      <div className="flex flex-col gap-1.5 mt-0.5">
+                        <select
+                          value={statusInput || ((statusTransitionMap[(report.status || "detected").toLowerCase()]) || [])[0]}
+                          onChange={(e) => setStatusInput(e.target.value)}
+                          className="bg-slate-900 border border-slate-700/60 rounded-lg text-[11px] p-1.5 text-slate-100 focus:outline-none focus:border-blue-500 select-none"
+                        >
+                          {((statusTransitionMap[(report.status || "detected").toLowerCase()]) || []).map((state) => (
+                            <option key={state} value={state} className="capitalize">
+                              {state}
+                            </option>
+                          ))}
+                        </select>
+                        <input
+                          type="text"
+                          placeholder="Audit comment..."
+                          value={notesInput}
+                          onChange={(e) => setNotesInput(e.target.value)}
+                          className="bg-slate-900 border border-slate-700/60 rounded-lg text-[11px] p-1.5 text-slate-100 focus:outline-none focus:border-blue-500"
+                        />
+                        {updateError && (
+                          <span className="text-[10px] text-red-400 font-medium">{updateError}</span>
+                        )}
+                        <button
+                          onClick={() => handleStatusSubmit(report.id, report.status || "detected")}
+                          disabled={updatingId === report.id}
+                          className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-bold text-[11px] py-1.5 px-3 rounded-lg mt-0.5 cursor-pointer select-none transition duration-150"
+                        >
+                          {updatingId === report.id ? "Updating..." : "Update Status"}
+                        </button>
+                      </div>
+                    ) : (
+                      <span className="text-[10px] text-slate-500 italic mt-0.5">Workflow completed</span>
+                    )}
                   </div>
 
                   <div className="text-[9px] text-slate-500 mt-2 text-right italic">

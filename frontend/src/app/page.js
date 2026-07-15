@@ -60,6 +60,7 @@ export default function Dashboard() {
     low: true
   });
   const [classFilter, setClassFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
 
   const fetchData = async () => {
     try {
@@ -126,6 +127,11 @@ export default function Dashboard() {
       if (!classes.includes(classFilter)) return false;
     }
 
+    // 3. Check status filter
+    if (statusFilter !== "all") {
+      if ((report.status || "detected").toLowerCase() !== statusFilter) return false;
+    }
+
     return true;
   });
 
@@ -143,6 +149,11 @@ export default function Dashboard() {
     if (classFilter !== "all") {
       const classes = issue.detections?.map((d) => d.class.toLowerCase()) || [];
       if (!classes.includes(classFilter)) return false;
+    }
+
+    // 3. Check status filter
+    if (statusFilter !== "all") {
+      if ((issue.status || "detected").toLowerCase() !== statusFilter) return false;
     }
 
     return true;
@@ -324,6 +335,25 @@ export default function Dashboard() {
                 ))}
               </div>
             </div>
+
+            {/* Status Filter */}
+            <div className="flex flex-col gap-1.5 mt-1">
+              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wide">Status Filter:</span>
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+                className="bg-slate-950 border border-slate-800 rounded-xl text-xs p-2 text-slate-300 focus:outline-none focus:border-blue-500 w-full"
+              >
+                <option value="all">All Statuses</option>
+                <option value="detected">Detected</option>
+                <option value="verified">Verified</option>
+                <option value="assigned">Assigned</option>
+                <option value="inspection">Inspection</option>
+                <option value="repair">Repair</option>
+                <option value="completed">Completed</option>
+                <option value="closed">Closed</option>
+              </select>
+            </div>
           </section>
 
           {/* Quick Demo Image Upload Widget */}
@@ -396,6 +426,25 @@ export default function Dashboard() {
                           >
                             {maxSeverity}
                           </span>
+                          <span
+                            className={`text-[8px] font-extrabold uppercase px-1.5 py-0.5 rounded-full shrink-0 border ${
+                              (report.status || "detected").toLowerCase() === "verified"
+                                ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                                : (report.status || "detected").toLowerCase() === "assigned"
+                                ? "bg-indigo-500/10 text-indigo-400 border-indigo-500/20"
+                                : (report.status || "detected").toLowerCase() === "inspection"
+                                ? "bg-amber-500/10 text-amber-400 border-amber-500/20"
+                                : (report.status || "detected").toLowerCase() === "repair"
+                                ? "bg-orange-500/10 text-orange-400 border-orange-500/20"
+                                : (report.status || "detected").toLowerCase() === "completed"
+                                ? "bg-teal-500/10 text-teal-400 border-teal-500/20"
+                                : (report.status || "detected").toLowerCase() === "closed"
+                                ? "bg-rose-500/10 text-rose-400 border-rose-500/20"
+                                : "bg-slate-800 text-slate-400 border-slate-700"
+                            }`}
+                          >
+                            {report.status || "detected"}
+                          </span>
                           {report.model_version && (
                             <span className="text-[9px] text-blue-400 font-bold bg-blue-950/40 border border-blue-900/40 px-1.5 py-0.5 rounded-full shrink-0 uppercase tracking-wide">
                               {report.model_version.split("-").pop()}
@@ -436,7 +485,7 @@ export default function Dashboard() {
 
         {/* Right Side: Map Container */}
         <div className="flex-1 h-full min-w-0 relative">
-          <MapComponent reports={filteredIssues} />
+          <MapComponent reports={filteredIssues} onRefresh={fetchData} />
         </div>
 
       </div>

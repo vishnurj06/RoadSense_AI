@@ -62,4 +62,40 @@ class ReportResponse(BaseModel):
     image_url: Optional[str]
     speed_kmph: Optional[float]
     model_version: Optional[str]
+    status: Optional[str] = "detected"
     detections: List[DetectionResponse] = []
+
+
+class IssueStatusUpdate(BaseModel):
+    issue_id: str = Field(..., description="ID of the issue to update")
+    status: str = Field(..., description="Target status for transition")
+    notes: Optional[str] = Field(
+        None, description="Optional text comment explaining the update"
+    )
+
+
+class AuditLogResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    issue_id: str
+    changed_by: str
+    old_status: str
+    new_status: str
+    notes: Optional[str]
+    timestamp: datetime
+
+
+class IssueResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    class_name: str
+    status: str
+    severity: str
+    image_url: Optional[str]
+    latitude: float
+    longitude: float
+    detection_count: int
+    created_at: datetime
+    updated_at: datetime

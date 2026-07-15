@@ -12,7 +12,7 @@ from geoalchemy2 import Geography
 
 import models
 import schemas
-from database import engine, get_db
+from database import get_db
 
 INFERENCE_URL = os.getenv("INFERENCE_URL", "http://localhost:8001")
 
@@ -364,7 +364,10 @@ def get_map_geojson(db: Session = Depends(get_db)):
             "type": "Feature",
             "geometry": {
                 "type": "Point",
-                "coordinates": [issue.longitude, issue.latitude],  # GeoJSON is [lon, lat]
+                "coordinates": [
+                    issue.longitude,
+                    issue.latitude,
+                ],  # GeoJSON is [lon, lat]
             },
             "properties": {
                 "report_id": issue.id,  # Alias for compatibility with map component
@@ -389,7 +392,7 @@ def get_map_geojson(db: Session = Depends(get_db)):
 @app.post("/verify")
 def verify_reports(db: Session = Depends(get_db)):
     unclustered_reports = (
-        db.query(models.Report).filter(models.Report.issue_id == None).all()
+        db.query(models.Report).filter(models.Report.issue_id.is_(None)).all()
     )
     count = 0
     for r in unclustered_reports:
@@ -449,3 +452,83 @@ def get_analytics(db: Session = Depends(get_db)):
         "severity_distribution": severity_counts,
         "class_distribution": class_counts,
     }
+
+
+# Status transition rules
+VALID_TRANSITIONS = {
+    "detected": {"verified", "closed"},
+    "verified": {"assigned", "closed"},
+    "assigned": {"inspection", "repair", "verified"},
+    "inspection": {"repair", "assigned"},
+    "repair": {"completed"},
+    "completed": {"closed", "repair"},
+    "closed": {"detected"},
+}
+
+
+@app.post("/repair", response_model=schemas.IssueResponse)
+def update_issue_status(
+    payload: schemas.IssueStatusUpdate, db: Session = Depends(get_db)
+):
+    # 1. Fetch issue
+    issue = db.query(models.Issue).filter(models.Issue.id == payload.issue_id).first()
+    if not issue:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Issue not found"
+        )
+
+    old_status = issue.status
+    new_status = payload.status.lower()
+
+    # 2. Check transition validity
+    valid_next_states = VALID_TRANSITIONS.get(old_status, set())
+    if new_status not in valid_next_states:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid transition: Cannot change status from '{old_status}' to '{new_status}'.",
+        )
+
+    # 3. Apply state transition
+    issue.status = new_status
+    issue.updated_at = datetime.utcnow()
+
+    # 4. Write to audit log
+    audit_log = models.IssueAuditLog(
+        id=str(uuid.uuid4()),
+        issue_id=issue.id,
+        changed_by="authority_user",
+        old_status=old_status,
+        new_status=new_status,
+        notes=payload.notes,
+        timestamp=datetime.utcnow(),
+    )
+    db.add(audit_log)
+
+    try:
+        db.commit()
+        db.refresh(issue)
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update issue status: {e}",
+        )
+
+    return issue
+
+
+@app.get("/issues/{issue_id}/audit-log", response_model=List[schemas.AuditLogResponse])
+def get_issue_audit_log(issue_id: str, db: Session = Depends(get_db)):
+    issue = db.query(models.Issue).filter(models.Issue.id == issue_id).first()
+    if not issue:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Issue not found"
+        )
+
+    logs = (
+        db.query(models.IssueAuditLog)
+        .filter(models.IssueAuditLog.issue_id == issue_id)
+        .order_by(models.IssueAuditLog.timestamp.desc())
+        .all()
+    )
+    return logs

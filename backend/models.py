@@ -14,7 +14,9 @@ class Issue(Base):
     status = Column(
         String(50), nullable=False, default="detected"
     )  # 'detected', 'verified' etc.
-    severity = Column(String(20), nullable=False, default="low")  # 'low', 'medium', 'high'
+    severity = Column(
+        String(20), nullable=False, default="low"
+    )  # 'low', 'medium', 'high'
     image_url = Column(String(500), nullable=True)
     latitude = Column(Float, nullable=False)
     longitude = Column(Float, nullable=False)
@@ -26,6 +28,9 @@ class Issue(Base):
     )
 
     reports = relationship("Report", back_populates="issue")
+    audit_logs = relationship(
+        "IssueAuditLog", back_populates="issue", cascade="all, delete-orphan"
+    )
 
 
 class Report(Base):
@@ -40,12 +45,18 @@ class Report(Base):
     image_url = Column(String(500), nullable=True)
     speed_kmph = Column(Float, nullable=True)
     model_version = Column(String(100), nullable=True)
-    issue_id = Column(String(36), ForeignKey("issues.id", ondelete="SET NULL"), nullable=True)
+    issue_id = Column(
+        String(36), ForeignKey("issues.id", ondelete="SET NULL"), nullable=True
+    )
 
     issue = relationship("Issue", back_populates="reports")
     detections = relationship(
         "Detection", back_populates="report", cascade="all, delete-orphan"
     )
+
+    @property
+    def status(self):
+        return self.issue.status if self.issue else "detected"
 
 
 class Detection(Base):
@@ -61,3 +72,19 @@ class Detection(Base):
     severity = Column(String(20), nullable=False)  # 'low', 'medium', 'high'
 
     report = relationship("Report", back_populates="detections")
+
+
+class IssueAuditLog(Base):
+    __tablename__ = "issue_audit_logs"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    issue_id = Column(
+        String(36), ForeignKey("issues.id", ondelete="CASCADE"), nullable=False
+    )
+    changed_by = Column(String(100), nullable=False, default="authority_user")
+    old_status = Column(String(50), nullable=False)
+    new_status = Column(String(50), nullable=False)
+    notes = Column(String(500), nullable=True)
+    timestamp = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    issue = relationship("Issue", back_populates="audit_logs")

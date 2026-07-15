@@ -23,36 +23,37 @@
   - [x] Remove hardcoded mock detections in frontend.
   - [x] Handle empty detections gracefully in the UI (success toast, no pin dropped).
   - [x] Display `model_version` and speed in the report detail view (popup & list).
-- [ ] Verify the upload flow: a non-road image yields no pothole pin.
+- [x] Verify the upload flow: a non-road image yields no pothole pin.
 
 
 ## B-2: PostGIS + Real Duplicate Verification
-- [ ] Upgrade Docker PostgreSQL to PostGIS (`postgis/postgis:15-3.4`).
-- [ ] Add Alembic for migrations:
-  - [ ] Initialize Alembic in `backend/`.
-  - [ ] Add geometry column `geometry(Point, 4326)` to `reports`.
-  - [ ] Add GiST index on the geometry column.
-- [ ] Implement `issues` table:
-  - [ ] Schema: issue ID, class, geometry, status, detection_count.
-- [ ] Implement `POST /verify` (clustering logic):
-  - [ ] Query nearby reports of the same class within ~20m using `ST_DWithin`.
-  - [ ] Group reports into a verified `issue` and count detections.
-- [ ] Update frontend map:
-  - [ ] Load and plot issues instead of raw reports on the map.
-  - [ ] Render a badge/indicator indicating number of reports verifying it.
-- [ ] Verify clustering: ingesting 3 nearby frames yields 1 issue.
+- [x] Upgrade Docker PostgreSQL to PostGIS (`postgis/postgis:15-3.4`).
+- [x] Add Alembic for migrations:
+  - [x] Initialize Alembic in `backend/`.
+  - [x] Add geometry column `geometry(Point, 4326)` to `reports` and `issues`.
+  - [x] Add GiST index on the geometry columns.
+- [x] Implement `issues` table:
+  - [x] Schema: issue ID, class, geometry, status, detection_count, max severity, timestamps.
+- [x] Implement `POST /verify` (clustering logic):
+  - [x] Query nearby reports of the same class within ~20m using `ST_DWithin` geography casting.
+  - [x] Group reports into a verified `issue` and count detections synchronously on insert.
+- [x] Update frontend map:
+  - [x] Load and plot issues instead of raw reports on the map.
+  - [x] Render a badge/indicator indicating number of reports verifying it in Leaflet custom SVG marker.
+- [x] Verify clustering: ingesting 3 nearby frames yields 1 issue (verified in unit tests).
+
 
 ## B-3: Repair Workflow
-- [ ] Add `status` field to issues: `detected` → `verified` → `assigned` → `inspection` → `repair` → `completed` → `closed`.
-- [ ] Implement `POST /repair` endpoint:
-  - [ ] Handle status transition and validate valid paths.
-- [ ] Implement `audit_log` table:
-  - [ ] Track timestamp, actor, issue_id, action, state change.
-- [ ] Update frontend:
-  - [ ] Render issue status badge.
-  - [ ] Add dropdown/actions to advance status.
-  - [ ] Add a status filter.
-- [ ] Verify repair flow walks issue from end to end.
+- [x] Add `status` field to issues: `detected` → `verified` → `assigned` → `inspection` → `repair` → `completed` → `closed`.
+- [x] Implement `POST /repair` endpoint:
+  - [x] Handle status transition and validate valid paths (flexible state machine).
+- [x] Implement `audit_log` table:
+  - [x] Track timestamp, actor, issue_id, action, state change (with notes).
+- [x] Update frontend:
+  - [x] Render issue status badge on map popup and sidebar logs.
+  - [x] Add dropdown/actions to advance status directly on Leaflet map popup.
+  - [x] Add a status filter.
+- [x] Verify repair flow walks issue from end to end.
 
 ## B-4: Auth & Roles
 - [ ] Implement `POST /auth/login` and `POST /auth/register` endpoints.

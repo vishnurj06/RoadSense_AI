@@ -36,9 +36,9 @@ This file tracks the project state, architectural decisions, completed tasks, an
 
 | Phase / Task | Task Description | Status | Notes |
 |---|---|---|---|
-| **B-0** | Build the stub inference service (`backend/stub_infer.py`) | Planned | Port 8001, serves `POST /infer` with fake detections. |
-| **B-1** | Real upload flow (`POST /detect-image` & Next.js integration) | Planned | Saves image, calls `INFERENCE_URL`, saves detections. |
-| **B-2** | PostGIS + real duplicate verification (`POST /verify`) | Planned | `ST_DWithin` spatial clustering into issues table. |
+| **B-0** | Build the stub inference service (`backend/stub_infer.py`) | Completed | Port 8001, serves `POST /infer` with dynamic image sizes. |
+| **B-1** | Real upload flow (`POST /detect-image` & Next.js integration) | Completed | Saves image, calls `INFERENCE_URL` asynchronously, triggers sliding toasts. |
+| **B-2** | PostGIS + real duplicate verification (`POST /verify`) | Completed | `ST_DWithin` spatial clustering of mixed classes within 20m, map confirmation badges. |
 | **B-3** | Repair workflow (`POST /repair` + status updates + audit log) | Planned | Issue status transitions & audit logging. |
 | **B-4** | Auth & roles (JWT, bcrypt/argon2, role-based dependencies) | Planned | Protect mutating endpoints, login/register views. |
 | **B-5** | Dashboards (Authority, Fleet, Admin views & charts) | Planned | Analytics feeds, user/model management. |
@@ -53,4 +53,5 @@ This file tracks the project state, architectural decisions, completed tasks, an
 - **Next.js Port:** `http://localhost:3000`
 
 ## 4. Verification & Testing Status
-- **Automated Tests:** `backend/test_api.py` contains tests covering base endpoint behaviors. Status: **PASSING (Phase 1 baseline)**.
+- **Automated Tests:** 12 automated tests in `backend/test_api.py`, `backend/test_detect_image.py`, and `backend/test_stub.py` covering stub detections, upload pipeline, and spatial clustering are **PASSING**.
+
