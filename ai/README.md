@@ -65,8 +65,8 @@ python extract_frames.py dashcam.mp4              # → test_images/
 | Variable | Default | Notes |
 |---|---|---|
 | `MODEL_PATH` | `weights/best.pt` | **Swap this to deploy a new model. No code changes needed.** |
-| `MODEL_VERSION` | `roadsense-yolov8n-v1` | Returned on every response. **Bump on every retrain.** |
-| `CONF_THRESHOLD` | `0.25` | Detections below this are dropped. The backend never re-filters. |
+| `MODEL_VERSION` | `roadsense-yolov8s-v2` | Returned on every response. **Bump on every retrain.** |
+| `CONF_THRESHOLD` | `0.30` | F1-optimal on the v2-2 val set. Detections below this are dropped; the backend never re-filters. |
 
 ## Layout
 
@@ -79,13 +79,28 @@ extract_frames.py  video → frames
 weights/           gitignored
 ```
 
-## ⚠ Current model is weak — see `experiments.md`
+## Model status — read before quoting any number. See `experiments.md`.
 
-The checkpoint in `weights/best.pt` is the 12-epoch CPU baseline. On real dashcam footage it
-**never exceeds 0.369 confidence**, and finds nothing at all above `conf=0.4`. `CONF_THRESHOLD` is
-temporarily set to `0.25` just so the pipeline demonstrably produces output end-to-end.
+`weights/best.pt` is the GPU-trained `v2-2` checkpoint (yolov8s, 640px, `conf=0.30`).
 
-This is a **model** problem, not a **service** problem — the contract, the endpoint and the backend
-integration are all correct and unaffected. Replacing `weights/best.pt` with the properly-trained
-model fixes it with zero code changes. Reset `CONF_THRESHOLD` from the new model's F1 curve at that
-point.
+**It detects potholes.** On `potholevideos.mp4` — a street genuinely full of them — it fires on
+**77% of frames**, boxes on target, up to **0.755** confidence. That is the clip to demo.
+
+**It misses a lot of them.** Val recall is **0.472**: one extracted frame with five obvious potholes
+returns zero detections. Precision 0.664 / recall 0.472 — *when it fires it's usually right, it just
+doesn't fire often enough.* Never state the first half without the second.
+
+Two more things not to trip over:
+
+- **`v2-2` did not beat the 12-epoch CPU baseline** (val mAP50 0.550 vs 0.556). Bigger model, 4× the
+  epochs and higher resolution changed nothing — the bottleneck is **data**, not training config.
+- **`dashcam.mp4` contains no potholes** (it's a snowy highway), so every detection on it — from this
+  model *and* from the Phase-1 Roboflow API — is a false positive. Use it to measure the
+  false-positive rate, where a good score is **zero** detections. Never as proof the model works.
+
+The two test sets do different jobs:
+
+| footage | frames | measures | good result |
+|---|---|---|---|
+| `potholevideos.mp4` | `pothole_frames/` | detection ability | **many** detections |
+| `dashcam.mp4` | `test_images/` | false-positive rate | **zero** detections |

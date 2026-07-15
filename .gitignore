@@ -9,6 +9,7 @@ __pycache__/
 # regenerable. Person B never needs these — he talks to the /infer service.
 ai/weights/
 ai/test_images/
+ai/pothole_frames/
 runs/
 *.pt
 *.mp4
