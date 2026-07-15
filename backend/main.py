@@ -37,27 +37,30 @@ def seed_users():
     try:
         inspector = inspect(engine)
         if inspector.has_table("users"):
-            user_count = db.query(models.User).count()
-            if user_count == 0:
-                print("Seeding default users...", flush=True)
-                admin_user = models.User(
-                    username="admin",
-                    hashed_password=auth.hash_password("password"),
-                    role="admin",
+            default_users = [
+                {"username": "admin", "role": "admin"},
+                {"username": "officer", "role": "authority"},
+                {"username": "driver", "role": "fleet"},
+            ]
+            seeded = False
+            for u in default_users:
+                existing = (
+                    db.query(models.User)
+                    .filter(models.User.username == u["username"])
+                    .first()
                 )
-                officer_user = models.User(
-                    username="officer",
-                    hashed_password=auth.hash_password("password"),
-                    role="authority",
-                )
-                driver_user = models.User(
-                    username="driver",
-                    hashed_password=auth.hash_password("password"),
-                    role="fleet",
-                )
-                db.add_all([admin_user, officer_user, driver_user])
+                if not existing:
+                    print(f"Seeding default user: {u['username']}...", flush=True)
+                    user = models.User(
+                        username=u["username"],
+                        hashed_password=auth.hash_password("password"),
+                        role=u["role"],
+                    )
+                    db.add(user)
+                    seeded = True
+            if seeded:
                 db.commit()
-                print("Default users seeded successfully.", flush=True)
+                print("Default users seeding completed.", flush=True)
     except Exception as e:
         print(f"Error seeding default users: {e}", flush=True)
         db.rollback()
