@@ -132,7 +132,9 @@ def test_upload_image(client):
     assert response.status_code == 200
     data = response.json()
     assert "image_url" in data
-    assert data["image_url"].startswith("/static/uploads/") or "http" in data["image_url"]
+    assert (
+        data["image_url"].startswith("/static/uploads/") or "http" in data["image_url"]
+    )
 
 
 def test_spatial_clustering(client):

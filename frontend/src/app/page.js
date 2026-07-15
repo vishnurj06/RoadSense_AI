@@ -51,7 +51,12 @@ const BACKEND_URL = "http://localhost:8000";
 
 export default function Dashboard() {
   const router = useRouter();
-  const [user, setUser] = useState(null);
+  const [user, setUser] = useState(() => {
+    // Lazy initializer: read once at mount (client-only, safe in "use client" component)
+    if (typeof window === "undefined") return null;
+    const saved = localStorage.getItem("user");
+    return saved ? JSON.parse(saved) : null;
+  });
   const [reports, setReports] = useState([]);
   const [mapIssues, setMapIssues] = useState([]);
   const [analytics, setAnalytics] = useState({
@@ -216,15 +221,14 @@ export default function Dashboard() {
   };
 
   useEffect(() => {
-    const savedUser = localStorage.getItem("user");
-    if (!savedUser) {
+    // user is already populated from the lazy useState initializer above.
+    // This effect only handles redirect and initial data fetch.
+    if (!user) {
       router.push("/login");
       return;
     }
-    const parsed = JSON.parse(savedUser);
-    // eslint-disable-next-line react/no-direct-mutation-state
-    setUser(parsed);
-    fetchData(parsed);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetchData(user);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
