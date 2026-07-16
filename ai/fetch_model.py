@@ -40,6 +40,7 @@ import shutil
 import sys
 import tempfile
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -90,28 +91,88 @@ def describe(version, spec):
         print(f"      ! {w}")
 
 
+class _StripAuthOnRedirect(urllib.request.HTTPRedirectHandler):
+    """Drop Authorization when a redirect crosses to another host.
+
+    A private-repo release asset redirects to a signed S3/objects URL that already carries its own
+    credentials in the query string. urllib re-sends our `Authorization: Bearer ...` to that host,
+    and S3 rejects the request with "Only one auth mechanism allowed". Stripping the header on a
+    cross-host hop is what curl -L and requests do, and it is the difference between this script
+    working and 400-ing for anyone using a token.
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is None:
+            return None
+        if urllib.parse.urlsplit(req.full_url).netloc != urllib.parse.urlsplit(newurl).netloc:
+            new.headers = {k: v for k, v in new.headers.items() if k.lower() != "authorization"}
+            new.unredirected_hdrs.pop("Authorization", None)
+        return new
+
+
+_OPENER = urllib.request.build_opener(_StripAuthOnRedirect)
+
+
+def _github_api_asset_url(url, token):
+    """Resolve a browser download URL to its API asset URL, which is the supported private-repo path.
+
+    Returns None for anything that is not a github.com release download (e.g. a file:// URL in tests,
+    or an S3/MinIO object), so those keep working untouched.
+    """
+    parts = urllib.parse.urlsplit(url)
+    if parts.netloc != "github.com" or "/releases/download/" not in parts.path:
+        return None
+    # /<owner>/<repo>/releases/download/<tag>/<filename>
+    seg = parts.path.strip("/").split("/")
+    if len(seg) < 6:
+        return None
+    owner, repo, tag, filename = seg[0], seg[1], seg[4], seg[5]
+
+    api = f"https://api.github.com/repos/{owner}/{repo}/releases/tags/{tag}"
+    req = urllib.request.Request(api)
+    req.add_header("Accept", "application/vnd.github+json")
+    if token:
+        req.add_header("Authorization", f"Bearer {token}")
+    try:
+        with _OPENER.open(req, timeout=30) as r:
+            release = json.load(r)
+    except (urllib.error.HTTPError, urllib.error.URLError):
+        return None  # fall back to the direct URL (fine for a public repo)
+
+    for asset in release.get("assets", []):
+        if asset.get("name") == filename:
+            return asset.get("url")
+    return None
+
+
 def download(url, dest, token=None):
-    req = urllib.request.Request(url)
+    # For a PRIVATE repo the browser download URL 404s even with a token; the API asset endpoint is
+    # the supported route. Public repos work either way, so this is a safe upgrade, not a special case.
+    api_url = _github_api_asset_url(url, token) if token else None
+    fetch_url = api_url or url
+
+    req = urllib.request.Request(fetch_url)
     if token:
         req.add_header("Authorization", f"Bearer {token}")
     # GitHub serves the binary (not JSON metadata) only for this Accept type.
     req.add_header("Accept", "application/octet-stream")
     try:
-        with urllib.request.urlopen(req) as r, open(dest, "wb") as out:
+        with _OPENER.open(req, timeout=120) as r, open(dest, "wb") as out:
             shutil.copyfileobj(r, out, _CHUNK)
     except urllib.error.HTTPError as e:
         if e.code == 404:
             sys.exit(
-                f"ERROR: 404 for {url}\n"
+                f"ERROR: 404 for {fetch_url}\n"
                 "  A private repo returns 404 (not 401) for release assets when the token is\n"
                 "  missing or lacks 'repo' scope, so this may be an AUTH problem, not a missing\n"
                 "  file. Check both:\n"
                 "    1. Is GITHUB_TOKEN set, with 'repo' scope?\n"
                 "    2. Has Person A actually published this release yet? (see ai/README.md)"
             )
-        sys.exit(f"ERROR: HTTP {e.code} fetching {url}: {e.reason}")
+        sys.exit(f"ERROR: HTTP {e.code} fetching {fetch_url}: {e.reason}")
     except urllib.error.URLError as e:
-        sys.exit(f"ERROR: could not reach {url}: {e.reason}")
+        sys.exit(f"ERROR: could not reach {fetch_url}: {e.reason}")
 
 
 def main():
