@@ -11,7 +11,7 @@
     "Person A: on every release, add an entry here and publish the asset. Never point an entry at",
     "an artifact you have not hashed."
   ],
-  "default": "roadsense-yolov8s-v3-merged",
+  "default": "roadsense-yolov8s-v4-all",
   "models": {
     "roadsense-yolov8s-v3-merged": {
       "released": "2026-07-16",
@@ -21,7 +21,10 @@
       "size_bytes": 22523178,
       "base": "yolov8s",
       "imgsz": 640,
-      "classes": ["pothole", "crack"],
+      "classes": [
+        "pothole",
+        "crack"
+      ],
       "conf_threshold": 0.29,
       "trained_on": "pothole-detection-3 (1,230) + RDD2022 India + 57 hard negatives = 6,655 images",
       "metrics": {
@@ -40,6 +43,39 @@
         "Severity is RELATIVE, not metric. Thresholds are tertiles of one video; SEVERITY_HORIZON_Y must match the camera (0.0 = horizon at/above frame top; a dashcam with a visible skyline needs ~0.5)."
       ],
       "supersedes": "roadsense-yolov8s-v2"
+    },
+    "roadsense-yolov8s-v4-all": {
+      "released": "2026-07-17",
+      "file": "best-v4-all.pt",
+      "url": "https://github.com/vishnurj06/RoadSense_AI/releases/download/model-v4-all/best-v4-all.pt",
+      "sha256": "7f585dca9ea5159a571a44fef393af499f2b91c7479ca1ad6bcf39f76bdcdb4e",
+      "size_bytes": 22520490,
+      "base": "yolov8s",
+      "imgsz": 640,
+      "classes": [
+        "pothole",
+        "crack"
+      ],
+      "conf_threshold": 0.29,
+      "trained_on": "pothole-detection-3 (1,230) + RDD2022 ALL countries, non-pothole images subsampled 1-in-3 to balance (10,689) + 57 hard negatives = 11,976 images. 8,750 pothole / 13,443 crack boxes.",
+      "metrics": {
+        "_note": "RDD test AP is NOT comparable to v3-merged: v4's test split is all-countries (5,817 imgs) vs v3's India-only (1,225). The real-footage numbers below are the ship gate.",
+        "rdd_test_map50": 0.5108,
+        "rdd_test_ap50_pothole": 0.4768,
+        "rdd_test_ap50_crack": 0.5448,
+        "rdd_test_map50_tta": 0.5191,
+        "real_footage_pothole_frames_hit": "51/55 (potholevideos) + 58/67 (india) = 109/122",
+        "real_footage_false_positives": "0/57",
+        "f1_optimal_conf": 0.292
+      },
+      "known_weaknesses": [
+        "MIXED vs v3-merged, not a clean win: BETTER on potholevideos (45->51 of 55 frames, robust at every threshold) but WORSE on the india video (60->58 of 67) where it is less confident (max 0.855 vs v3's 0.882). Net +15% detections (178->204) with false positives still 0.",
+        "4x more data (5.4k->27k images, 6 countries) produced only a marginal real-world change. Together with v2-2 (config changes -> nothing) this is the second experiment indicating the ceiling is LABEL QUALITY, not data quantity or training config.",
+        "Never validated from a moving vehicle. Both positive test sets are the same low, road-filling camera domain (median detection height 0.39 vs 0.41). The product is a windshield dashcam.",
+        "mAP50 >= 0.75 (Phase-2 target) NOT met and is likely near-SOTA for multi-class road damage.",
+        "Severity is RELATIVE, not metric. SEVERITY_HORIZON_Y must match the camera."
+      ],
+      "supersedes": "roadsense-yolov8s-v3-merged"
     }
   }
 }

@@ -4,12 +4,17 @@ Every training run gets a row. **All metrics below are on the `valid` split (118
 rows are comparable to each other. Test-split numbers are called out separately — never compare a
 test number against a val number.
 
-| run | base | epochs | imgsz | device | classes | mAP50 | notes |
-|---|---|---|---|---|---|---|---|
-| `train-2` (baseline) | yolov8n | 12 | 416 | CPU | pothole | 0.556 | val split |
-| `v2-2` | yolov8s | 48/100 | 640 | T4 | pothole | 0.550 | val; did **not** beat baseline |
-| `v3-rdd-india` (rejected) | yolov8s | 85/100 | 640 | T4 | pothole+crack | 0.427 | pothole AP 0.377 — regressed on real footage |
-| `v3-merged` (**current `best.pt`**) | yolov8s | ~60/100 | 640 | T4 | pothole+crack | 0.480 | pothole AP **0.460**, crack AP **0.499** |
+| run | base | epochs | imgsz | device | classes | train imgs | mAP50 | notes |
+|---|---|---|---|---|---|---|---|---|
+| `train-2` (baseline) | yolov8n | 12 | 416 | CPU | pothole | 1,230 | 0.556 | val split |
+| `v2-2` | yolov8s | 48/100 | 640 | T4 | pothole | 1,230 | 0.550 | val; **config changes did nothing** |
+| `v3-rdd-india` (rejected) | yolov8s | 85/100 | 640 | T4 | pothole+crack | ~5.4k | 0.427 | pothole AP 0.377 — collapsed to 18/55 on real footage |
+| `v3-merged` | yolov8s | ~60/100 | 640 | T4 | pothole+crack | 6,655 | 0.480 | pothole AP 0.460, crack AP 0.499 |
+| `v4-all` (**current `best.pt`**) | yolov8s | 60 | 640 | T4 | pothole+crack | 11,976 | 0.511 | pothole AP 0.477, crack AP **0.545**; TTA 0.519 |
+
+⚠️ **The mAP50 column is NOT comparable across the last two rows.** `v3-merged`'s test split is
+India+p3 (1,225 images); `v4-all`'s is all-countries+p3 (5,817). Judge them by the real-footage
+head-to-head below, not by this column.
 
 **Current deployment: `v3-merged`.** `MODEL_VERSION=roadsense-yolov8s-v3-merged`, `CONF_THRESHOLD=0.29`
 (F1-optimal, 0.52 at 0.292). Old `v2-2` kept at `weights/best-yolov8s-v2-2.pt`.
@@ -214,6 +219,51 @@ The baseline is kept at `weights/best-yolov8n-v1.pt` so the comparison above sta
 `0.30` is a **dataset-derived** threshold, not a field-validated one. It is the right default and it
 is honestly sourced — but as the table above shows, it does not stop false positives on footage that
 looks nothing like the training set.
+
+## 🔬 `v4-all` — the data-scale experiment. **Answer: data scale is not the lever either.**
+
+**The single most important result in this file.** Every prior run trained on a subset; `v4-all`
+tested the one untried hypothesis — **more data**.
+
+**Setup:** all 6 RDD countries (India 5,368 · Japan 7,432 · Norway 5,708 · US 3,348 · China 3,051 ·
+Czech 1,962 = 26,869) + pothole-detection-3 + 57 hard negatives. Non-pothole images subsampled 1-in-3
+so cracks could not swamp potholes (34,114 → 13,443 crack boxes; **every** pothole kept: 8,750).
+Final: **11,976 train images — 4x v3's data**, same yolov8s @640 so only the data changed.
+
+### The result: marginal and mixed
+
+Real footage @ conf 0.29 — the ship gate:
+
+| test set | v3-merged | **v4-all** | |
+|---|---|---|---|
+| `potholevideos.mp4` | 45/55 | **51/55** | ✅ v4 better at **every** threshold (+3 to +7) |
+| `Pothole_new_india_360p.mp4` | **60/67** | 58/67 | ❌ v4 worse; less confident (max 0.855 vs 0.882) |
+| hard negatives | 0 FP | **0 FP** | tie |
+| **total frames hit** | 105/122 | **109/122** | |
+| **total detections** | 178 | **204 (+15%)** | |
+
+**Shipped** — net recall is up (the known weakness) with false positives still 0, and v4 saw 6
+countries vs 1, which should generalise better to the dashcam domain we cannot test. But it is an
+**honest marginal call, not a clean win**: it failed the stated gate ("beat v3 on all three").
+
+### What it actually proves — this is the finding, not the model
+
+**4x the data → a ~4-frame net change.** Not a breakthrough. Set that beside `v2-2`:
+
+| hypothesis | experiment | result |
+|---|---|---|
+| "it's under-trained" (epochs / model size / resolution) | `v2-2` | **falsified** — 0.556 → 0.550 |
+| "it needs more data" | `v4-all` | **falsified as a step-change** — 4x data, marginal real-world gain |
+
+**Two independent experiments now point at the same conclusion: the ceiling is LABEL QUALITY, not
+data quantity and not training config.** RDD's labels are inconsistent — the same damage is boxed
+differently across countries, and plenty is missed entirely.
+
+**Consequence for the Phase-2/3 targets (D-4).** mAP50 ≥ 0.75 and the PRD's precision ≥95% /
+recall ≥90% are **not reachable by scaling this approach**. That is no longer an opinion — it is two
+falsified hypotheses. Anyone proposing "just train it longer / feed it more" should be shown this
+table. **The remaining levers are: better labels, a domain-matched dataset (real dashcam footage), or
+accepting a lower, honest target.**
 
 ## Note on `docs/codebase_audit_report.md` (2026-07-16) — stale on the AI track
 

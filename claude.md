@@ -60,14 +60,25 @@ Last audited: **2026-07-16** (full codebase read-through by Senior Technical Arc
   `minioadmin / minioadmin`. `init_s3_bucket()` is called at module load time.
 
 ### H. AI Model (A-1 / A-2 / A-3)
-- **Current weights:** `ai/weights/best.pt` = **`v3-merged`** (yolov8s, 22.5 MB, T4 GPU), trained on
-  `pothole-detection-3` + RDD2022 India + hard negatives (6,655 images).
-- **Two classes:** `pothole` **and `crack`** — the dashboard's `crack` filter now matches.
-- **Confidence threshold:** `CONF_THRESHOLD=0.29` (F1-optimal, 0.52 at 0.292; env-configurable).
+- **Current weights:** `ai/weights/best.pt` = **`v4-all`** (yolov8s, 22.5 MB, T4 GPU), trained on
+  `pothole-detection-3` + **RDD2022 all 6 countries** (non-pothole images subsampled 1-in-3 to
+  balance; every pothole kept) + 57 hard negatives = **11,976 images** (8,750 pothole / 13,443 crack
+  boxes).
+- **Two classes:** `pothole` **and `crack`** — the dashboard's `crack` filter matches.
+- **Confidence threshold:** `CONF_THRESHOLD=0.29` (F1-optimal, 0.54 at 0.292; env-configurable).
 - **Inference:** fully offline — no Roboflow, no API key, no network required.
-- **Real-footage validation:** beats the old pothole-only model on both axes — 45/55 pothole frames
-  (vs 43) with **0** false positives on clean road (vs 3). Crack AP50 0.499 on RDD test, but the
-  class is conservative and unverified on non-RDD crack footage. See `ai/experiments.md`.
+- **Real-footage validation (the ship gate — RDD test AP has never decided anything here):**
+  **109/122 pothole frames** across two videos, **0/57 false positives**. vs `v3-merged`: better on
+  potholevideos (45→**51**/55, at every threshold) but worse on the india video (60→**58**/67); net
+  **+15% detections** (178→204). An honest marginal call, not a clean win. See `ai/experiments.md`.
+- **Previous:** `v3-merged` preserved at `weights/best-v3-merged.pt` (registry keeps its entry too).
+
+> 🔬 **The most important result in the project.** `v4-all` was the **data-scale experiment**: 4x the
+> data (5.4k → 27k images, 6 countries) produced a **marginal, mixed** real-world change. Together
+> with `v2-2` (bigger model + 4x epochs + higher res → **0.556 → 0.550**, i.e. nothing), that is
+> **two falsified hypotheses**. **The ceiling is LABEL QUALITY, not data quantity and not training
+> config.** mAP50 ≥ 0.75 and the PRD's 95% precision are **not reachable by scaling this approach** —
+> show anyone who proposes "just train longer / feed it more" the table in `ai/experiments.md`.
 
 ### H2. Model registry (A3-7) — **how to get the weights, no longer "ask Person A"**
 - **`ai/models.json`** is the registry: the single source of truth for which model is current, its
@@ -79,8 +90,13 @@ Last audited: **2026-07-16** (full codebase read-through by Senior Technical Arc
   asset without auth, so the script calls that out explicitly.
 - Weights still never enter git — only the registry entry does.
 
-- **Released:** tag `model-v3-merged` → asset `best-v3-merged.pt`. GitHub's displayed SHA256 matches
-  `models.json` exactly, so the fetcher's check will pass.
+- **Released:** tag `model-v3-merged` → asset `best-v3-merged.pt` (proven end-to-end with a real
+  token: downloads, SHA256-verifies, loads).
+  ⚠️ **`model-v4-all` is registered in `models.json` but the release asset is NOT published yet** —
+  Person A must upload `best-v4-all.pt` under tag `model-v4-all`, or `fetch_model.py` will 404 on the
+  new default. Until then, `--version roadsense-yolov8s-v3-merged` still works.
+- **Token:** a collaborator needs a **classic** token with `repo` scope — a *fine-grained* token is
+  scoped to its resource owner and cannot see a repo owned by someone else. The owner can use either.
 
 > ⚠️ **`best.pt` is gitignored** — the repo alone cannot tell you the model's class count or version.
 > That gap caused the 2026-07-16 audit to report the model as single-class, **and** caused the
@@ -141,7 +157,7 @@ Last audited: **2026-07-16** (full codebase read-through by Senior Technical Arc
 | **A3-7** | Model release artifact / registry | ✅ Completed | `ai/models.json` + `ai/fetch_model.py`. Release `model-v3-merged` published; GitHub's SHA256 matches the registry. **Closes D-1.** |
 | **A3-6** | Latency — PRD <100 ms/frame | ✅ Completed | **Already passing: 93.7 ms** (AMD Ryzen 5 5600H, 12 cores, torch 6 threads, CPU, imgsz 640, median of 25). The old "103 ms failing" was a sloppy benchmark. **ONNX (132 ms) and OpenVINO (177 ms) are 1.4-1.9x SLOWER** — not shipped. See `ai/experiments.md`. ⚠️ Margin is 6%; depth (A3-3) + segmentation (A3-4) will blow it. 93.7 ms ≈ 10 fps, **not** real-time for 30 fps video. |
 | **A3-1** | Remaining 5 PRD classes | ⬜ Not started | 2 of 7 (`pothole`, `crack`). |
-| **A3-2** | Accuracy to agreed target | 🟡 In progress | v4 all-countries run training on Kaggle. |
+| **A3-2** | Accuracy to agreed target | ✅ **Experiment complete — target proven unreachable by scaling** | `v4-all` (11,976 imgs, all 6 RDD countries, **4x v3's data**) → **marginal, mixed** real-world change: 51/55 on potholevideos (v3: 45) but 58/67 on india (v3: 60); net +15% detections, FP still 0. **Shipped.** Combined with `v2-2` (config changes → nothing), **two falsified hypotheses now say the ceiling is LABEL QUALITY**, not data quantity or config. mAP50 ≥ 0.75 / 95% precision are **not reachable by scaling this approach** — this is the evidence for the D-4 target renegotiation. |
 | **A3-3** | Metric severity (depth) | ⬜ Not started | Will add a second model — watch the 6% latency margin. |
 | **A3-4** | Road segmentation | ❌ **Not built — premise measured dead** | Meant to kill treeline/dashboard FPs. **There are none left**: FP = **0/57 at deployed 0.29**, still 0 at 0.10; highest latent off-road detection is conf **0.077** (3.8x below threshold). The 57 hard negatives already solved it at zero latency cost. And **38% of real potholes sit in the same zone as those FPs**, so a filter costs 38% recall. Strictly negative trade. Reopen only if FP > 0 on real footage. |
 | **A3-5** | Field validation (real drive) | ⬜ Not started | Still no dashcam footage containing potholes. |
