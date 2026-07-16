@@ -1,8 +1,8 @@
 # RoadSense AI — Continuous Memory and Context Log (Phase 2 - MVP)
 
-This file is the canonical progress tracker for the RoadSense AI Platform (Backend & Frontend),
-maintained by Claude (Sonnet 4.6) starting from Task B-6. Updated after every completed and
-verified task.
+This file is the canonical progress tracker for the entire RoadSense AI project (Backend, Frontend,
+and AI Pipeline). Updated after every completed and verified task.
+Last audited: **2026-07-16** (full codebase read-through by Senior Technical Architect).
 
 ## Project Metadata
 
@@ -10,8 +10,8 @@ verified task.
 |---|---|
 | **Project Name** | RoadSense AI (Platform) |
 | **Role** | Person B (Backend & Frontend Platform Owner) |
-| **Sprint** | Phase 2 (Local Development / MVP) |
-| **Tech Stack** | FastAPI · Next.js · Tailwind CSS · Leaflet (OpenStreetMap) · PostgreSQL + PostGIS (Docker) · Redis · MinIO (S3-compatible) |
+| **Sprint** | Phase 2 (Local Development / MVP) — Platform ✅ Done · AI ⚠️ Partial |
+| **Tech Stack** | FastAPI · Next.js · Tailwind CSS · Leaflet (OpenStreetMap) · PostgreSQL + PostGIS (Docker) · Redis · MinIO (S3-compatible) · YOLOv8s (ultralytics) |
 | **Repo** | `github.com/vishnurj06/RoadSense_AI` |
 
 ---
@@ -37,12 +37,14 @@ verified task.
 ### D. Database Schema & Spatial (PostGIS)
 - **Decision:** `postgis/postgis:15-3.4` image (`roadsense-db`). `reports` and `issues` tables both
   have a `geometry(Point, 4326)` column with a GiST index. Alembic manages all schema migrations.
+  `models.Base.metadata.create_all()` is intentionally disabled — all schema changes go through Alembic.
 - `ST_DWithin` (Geography cast) clusters reports within **20 m** of the same location into one `Issue`.
 
 ### E. AI Inference Integration (Contract v2)
 - **Seam:** `POST /infer` on port 8001. Request: `multipart/form-data { file }`. Response: `{ model_version, image, inference_ms, detections: [{ class, confidence, bbox, severity }] }`.
 - **Switch:** `INFERENCE_URL` env var (default: `http://localhost:8001` → stub). One env-var swap to point at Person A's real service.
 - **Stub:** `backend/stub_infer.py` — tiny FastAPI app that returns plausible random detections (including empty arrays).
+- **Real service:** `ai/infer_service.py` — Contract v2-compliant FastAPI app loading `ai/weights/best.pt` (yolov8s v2-2) once at startup.
 
 ### F. Redis Caching (B-6)
 - **Decision:** `redis:7-alpine` container (`roadsense-redis`, port 6379).
@@ -57,9 +59,17 @@ verified task.
 - `boto3` connects to `http://localhost:9000` (or `S3_ENDPOINT_URL`). Credentials default to
   `minioadmin / minioadmin`. `init_s3_bucket()` is called at module load time.
 
+### H. AI Model (A-1 / A-2)
+- **Current weights:** `ai/weights/best.pt` = `v2-2` (yolov8s, 22.5 MB, trained on T4 GPU).
+- **Confidence threshold:** `CONF_THRESHOLD=0.30` (F1-optimal from BoxF1 curve; env-configurable).
+- **Inference:** fully offline — no Roboflow, no API key, no network required.
+- **Single-class only:** only `pothole` is detected. `crack` and other PRD classes not yet trained.
+
 ---
 
 ## 2. Phase 2 Progress Summary
+
+### Platform Track (Person B)
 
 | Task | Description | Status | Verified Notes |
 |---|---|---|---|
@@ -82,6 +92,18 @@ verified task.
 | `GET /health` endpoint | ✅ Done | Checks DB (`SELECT 1`) and Redis (`ping`). Returns 503 if DB is down. |
 | Frontend CI (lint + build) | ✅ Done | New `frontend-lint-build` job in `.github/workflows/ci.yml`: `npm ci` → `npm run lint` → `npm run build`. |
 
+### AI Track (Person A)
+
+| Task | Description | Status | Notes |
+|---|---|---|---|
+| **A-0** | Repo hygiene — all AI code in git, no secrets | ✅ Completed | `/ai/` committed, `.env` pattern, `requirements.txt`, `README.md`, `Dockerfile`. |
+| **A-1** | Kill Roboflow hosted API, use local weights | ✅ Completed | `ai/model.py` uses `ultralytics.YOLO(best.pt)`. Runs fully offline. |
+| **A-2** | Proper GPU training (target mAP50 ≥ 0.75) | ⚠️ Partial | `v2-2`: P 0.664 / R 0.472 / **mAP50 0.550**. Target NOT met. Bottleneck is data, not training config. |
+| **A-3** | Multi-class dataset (crack + RDD2022) | ❌ Not Done | Still single-class (`pothole`). `crack` filter in UI still matches nothing. |
+| **A-4** | Ship the inference HTTP service (`ai/infer_service.py`) | ✅ Completed | Contract v2-compliant. `POST /infer` + `GET /health`. Model loaded once at startup. |
+| **A-5** | Real severity estimation | ⚠️ Partial | Still bbox-area ratio heuristic (`ai/severity.py`). MiDaS/Depth-Anything not integrated. |
+| **A-6** | Real GPS (GPX track / phone sensor) | ❌ Not Done | `ai/detect.py` still uses `fake_gps()` — random jitter around Mumbai (19.0760, 72.8777). |
+
 ---
 
 ## 3. Active Technical Notes
@@ -90,6 +112,7 @@ verified task.
 |---|---|
 | FastAPI backend | `http://localhost:8000` |
 | Stub inference | `http://localhost:8001` |
+| Real AI inference | `http://localhost:8001` (swap `INFERENCE_URL` to point here from `ai/`) |
 | Next.js frontend | `http://localhost:3000` |
 | PostgreSQL (PostGIS) | `localhost:5432` DB: `roadsense` / User: `postgres` / Pass: `postgres` |
 | Redis | `redis://localhost:6379/0` |
@@ -117,6 +140,14 @@ verified task.
 | `S3_BUCKET_NAME` | `roadsense` |
 | `SECRET_KEY` | (set in `auth.py` — rotate before production) |
 
+### Key env vars for AI service
+
+| Var | Default |
+|---|---|
+| `MODEL_PATH` | `ai/weights/best.pt` |
+| `MODEL_VERSION` | `roadsense-yolov8s-v2` |
+| `CONF_THRESHOLD` | `0.30` (F1-optimal; set in `ai/.env`) |
+
 ---
 
 ## 4. Verification & Testing Status
@@ -126,21 +157,24 @@ verified task.
   limits, state-machine workflows, stub inference contract, upload pipeline (S3 mocking), and
   spatial clustering. All **PASSING**.
 - **CI Status:** Both jobs (backend lint+test, frontend lint+build) expected green on `main`.
+- **AI model validation:** `potholevideos.mp4` — 43/55 frames detected at conf=0.30. Boxes correctly
+  placed on real potholes. `dashcam.mp4` (Oregon highway, no potholes) — 3/57 frames fire (all false
+  positives: treeline, dashboard bezel). See `ai/experiments.md` for full details.
 
 ---
 
-## 5. Files Changed in B-6
+## 5. Known Gaps & Open Debt
 
-| File | Change |
-|---|---|
-| `backend/requirements.txt` | `boto3>=1.28.0`, `redis>=5.0.0` already present |
-| `backend/s3_storage.py` | New file — MinIO/S3 client, `init_s3_bucket()`, `upload_image_bytes_to_s3()` |
-| `backend/main.py` | Redis cache read/write in `GET /map` and `GET /analytics`; `GET /health` endpoint; paginated `GET /reports` |
-| `frontend/public/images/marker-icon.png` | Local Leaflet marker icon |
-| `frontend/public/images/marker-shadow.png` | Local Leaflet marker shadow |
-| `frontend/src/components/MapComponent.js` | Uses `/images/marker-icon.png` and `/images/marker-shadow.png` |
-| `frontend/src/app/page.js` | `reportPage` + `totalReports` state; `fetchData(currentUser, targetPage)` signature; pagination controls in Report Logs panel |
-| `.github/workflows/ci.yml` | Added `frontend-lint-build` job: `npm ci` → `npm run lint` → `npm run build` |
+| # | Gap | Severity | Owner | Notes |
+|---|---|---|---|---|
+| G-1 | Multi-class model — `crack` filter is dead UI | 🔴 High | Person A | A-3 not done. Next: RDD2022 dataset + retrain. |
+| G-2 | mAP50 ≥ 0.75 not achieved (current: 0.550) | 🔴 High | Person A | Data bottleneck. Hard-negative mining + RDD2022 is the fix, not more epochs. |
+| G-3 | GPS is faked (Mumbai random jitter) | 🟡 Medium | Person A | A-6 not done. Blocks real-world demo accuracy. |
+| G-4 | Severity heuristic unvalidated on dashcam data | 🟡 Medium | Person A | A-5 partial. All `potholevideos.mp4` detections are `low` (small bbox). |
+| G-5 | `GET /admin/system-health` returns hardcoded values | 🟢 Low | Person B | CPU/memory/disk are fake constants, not real psutil reads. |
+| G-6 | No fleet-specific backend endpoints | 🟢 Low | Person B | Fleet dashboard derives data from `vehicle_id` on reports — no registry API. |
+| G-7 | `page.js` is 1,064 lines — growing unwieldy | 🟢 Low | Person B | Refactor into role-specific sub-components before Phase 3 frontend work. |
+| G-8 | `task.md` is stale | 🟢 Low | — | Shows B-5/B-6 unchecked. `claude.md` is the canonical source. |
 
 ---
 
@@ -151,6 +185,7 @@ verified task.
 | No hosted-API dependency — pipeline runs offline | ✅ Stub covers dev; real `INFERENCE_URL` for prod |
 | No secrets in repo | ✅ All credentials via env vars / `.env` |
 | Upload flow is real — non-road image → 0 detections | ✅ `POST /detect-image` → stub/model |
+| All AI code in git, reproducible from clean clone | ✅ `/ai/` committed, `Dockerfile` + `requirements.txt` |
 | Duplicate clustering is real (PostGIS `ST_DWithin`) | ✅ B-2 |
 | Repair workflow + audit log | ✅ B-3 |
 | Auth works — unauthenticated writes rejected | ✅ B-4 (JWT + `RoleChecker`) |
@@ -162,5 +197,27 @@ verified task.
 | Paginated `GET /reports` | ✅ B-6 |
 | `GET /health` checking DB + Redis | ✅ B-6 |
 | CI green on backend **and** frontend | ✅ B-6 |
+| Model beats Phase-1 baseline (mAP50 > 0.556) | ❌ Current mAP50 = 0.550 (marginally below) |
+| ≥2 detection classes (`crack` filter matches something) | ❌ Still single-class (`pothole` only) |
+| All three severity buckets populated by real data | ⚠️ Heuristic present; `medium` band fires rarely |
 
-**Phase 2 MVP is feature-complete.** 🎉
+**Platform (Person B): Feature-complete. ✅**
+**AI (Person A): 2 hard criteria unmet (multi-class, mAP50 target). ⚠️**
+
+---
+
+## 7. Phase 3 (Beta) — What's Next
+
+These are NOT current tasks — they define the scope of Phase 3:
+
+- Multi-class model: ≥2 classes (`crack` priority), working toward all 7 PRD classes
+- Real GPS: GPX track reader or phone-sensor interpolation
+- Model precision ≥ 95% / recall ≥ 90% (PRD production targets — Phase 3/4 goal)
+- Hard-negative mining from `dashcam.mp4` frames to reduce false positives
+- Notifications (email/SMS/push for new high-severity issues)
+- Road Health Score algorithm
+- Real fleet endpoint (vehicle registry, camera health polling API)
+- Production cloud deployment (cloud DB, real S3, domain, TLS)
+- Admin model-version registry (swap deployed model without redeploy)
+- Frontend refactor: split `page.js` into role-specific route components
+- Performance validation: `/map` p95 < 2 s at ~10k reports
