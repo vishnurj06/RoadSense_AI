@@ -143,7 +143,7 @@ Last audited: **2026-07-16** (full codebase read-through by Senior Technical Arc
 | **A3-1** | Remaining 5 PRD classes | ⬜ Not started | 2 of 7 (`pothole`, `crack`). |
 | **A3-2** | Accuracy to agreed target | 🟡 In progress | v4 all-countries run training on Kaggle. |
 | **A3-3** | Metric severity (depth) | ⬜ Not started | Will add a second model — watch the 6% latency margin. |
-| **A3-4** | Road segmentation | ⬜ Not started | Same latency caveat. |
+| **A3-4** | Road segmentation | ❌ **Not built — premise measured dead** | Meant to kill treeline/dashboard FPs. **There are none left**: FP = **0/57 at deployed 0.29**, still 0 at 0.10; highest latent off-road detection is conf **0.077** (3.8x below threshold). The 57 hard negatives already solved it at zero latency cost. And **38% of real potholes sit in the same zone as those FPs**, so a filter costs 38% recall. Strictly negative trade. Reopen only if FP > 0 on real footage. |
 | **A3-5** | Field validation (real drive) | ⬜ Not started | Still no dashcam footage containing potholes. |
 
 ---

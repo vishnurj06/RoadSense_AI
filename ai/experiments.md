@@ -317,6 +317,50 @@ flips the conclusion. **Always measure the path you actually deploy.**
 costs accuracy, needs calibration data), a smaller imgsz (costs small-object recall — bad for
 potholes), `torch.compile`, or GPU/edge hardware.
 
+## A3-4 — road segmentation: measured, and NOT built. The problem is already solved.
+
+A3-4 exists to kill the treeline / dashboard-bezel false positives. **That problem no longer exists**,
+so the task has no upside and a large downside. Both sides measured on v3-merged:
+
+### Upside: zero — FP is already 0
+
+57 pothole-free dashcam frames (any detection = a false positive):
+
+| threshold | false positives |
+|---|---|
+| **0.29 (deployed)** | **0 / 57** |
+| 0.20 / 0.15 / 0.10 | **0 / 57** |
+| 0.05 | 2 — at conf **0.077** and **0.055** |
+
+The highest latent off-road detection is **conf 0.077 — 3.8x below the deployed 0.29.** A road mask
+would remove detections the confidence threshold already discards. **Nothing to gain.**
+
+**The 57 hard negatives already did segmentation's job, at zero latency cost.** v2-2 fired on the
+treeline at **0.395** and the dashboard at **0.341** — both *above* threshold. Adding those frames as
+background images in v3-merged drove it to 0. That is the cheaper fix, and it already shipped.
+
+### Downside: it would delete 38% of recall
+
+Where 81 true potholes actually sit vertically (`potholevideos.mp4`, conf 0.29):
+
+    min ycen 0.07 | median 0.41 | max 0.91
+    31 of 81 (38%) sit ABOVE ycen 0.35 — the same zone the false positives were in
+
+**A filter targeting the FP zone deletes 38% of real potholes.** Real potholes and the (already
+sub-threshold) false positives occupy the *same* part of the frame, so no naive geometric split
+separates them. A learned road mask might do better — but it would be spending a second model per
+frame, against a **6% latency margin** (see A3-6), to fix a **0-false-positive** problem.
+
+### Decision: not built. Revisit only when this is measured, not assumed.
+
+**Reopen A3-4 if and only if** FP > 0 at the deployed threshold on real footage. Right now the
+honest answer is that the ship gate (§A3-4: "FP stays 0 **and** recall is not regressed") is
+**unreachable** — FP is already 0, so segmentation can only hold or hurt.
+
+**One genuine future use, not FP filtering:** a road mask would let us *estimate the horizon
+automatically*, which would fix A-5's real limitation (`SEVERITY_HORIZON_Y` is currently hand-set per
+camera). If segmentation gets built, that — not false positives — is the reason.
+
 ## What would actually move the number
 
 In rough order of expected payoff:
