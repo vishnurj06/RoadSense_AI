@@ -169,8 +169,6 @@ The baseline is kept at `weights/best-yolov8n-v1.pt` so the comparison above sta
 is honestly sourced — but as the table above shows, it does not stop false positives on footage that
 looks nothing like the training set.
 
-## What would actually move the number
-
 ## Note on `docs/codebase_audit_report.md` (2026-07-16) — stale on the AI track
 
 That audit predates / could not see this model, and three of its AI findings are **wrong now**:
@@ -186,8 +184,8 @@ with only the repo *cannot* see how many classes the model has — the audit its
 verify". Anyone auditing the AI track needs the weights handed over separately. The audit's
 platform findings are unaffected.
 
-Its remaining AI criticisms **are** fair: mAP50 ≥ 0.75 is still unmet, and severity (A-5) is still
-an unvalidated bbox heuristic. GPS (A-6) is now addressed — see below.
+Its remaining AI criticism that **is** fair: mAP50 ≥ 0.75 is still unmet (a genuine data bottleneck).
+GPS (A-6) and severity (A-5) are both now addressed — see below.
 
 ## A-6 — GPS is real now (was: random jitter near Mumbai)
 
@@ -212,6 +210,57 @@ verified but has never run against a real recorded drive. `dashcam.mp4` has coor
 the video as pixels (not EXIF), which would need OCR — not worth it. The honest status is: the
 faking is gone as a silent default, and real GPS works the moment someone records a drive with a
 GPX logger.
+
+## A-5 — severity was measuring camera distance, not pothole size
+
+Measured on **81 real detections** (v3-merged @ conf 0.29 over `potholevideos.mp4`), the old
+bbox-area heuristic scored **`corr(depth-position, area_ratio) = +0.711`**, and its buckets were an
+almost perfect ladder of *how close the camera was*:
+
+| bucket (old) | n | mean depth-position (0 = far, 1 = near) |
+|---|---|---|
+| low | 24 | 0.187 |
+| medium | 19 | 0.367 |
+| high | 38 | 0.684 |
+
+**The same pothole scored `low` from far away and `high` from up close.** For a system whose entire
+job is prioritising repairs, that is worse than useless — it is confidently wrong.
+
+*(Two older claims are now stale: the Phase-1 audit's "the `medium` band has never fired" and
+`claude.md`'s "all `potholevideos.mp4` detections are low". Under v3-merged all three buckets fire.
+The distribution was never the real problem — the distance bias was.)*
+
+### The fix: perspective normalisation
+
+A pothole lies on the road plane, so pinhole geometry applies: depth `Z ~ 1/(y - y_horizon)`, and a
+real area `A` projects to apparent area `a ~ A/Z²`. Therefore `A ~ a / (y - y_horizon)²`.
+`severity.py` now divides apparent area by the squared distance-below-horizon of the bbox's **bottom
+edge** (the road-contact row). Same 81 detections:
+
+| | corr(depth, score) | bucket mean depth-positions |
+|---|---|---|
+| old (raw bbox area) | **+0.711** | 0.187 / 0.367 / 0.684 — a distance ladder |
+| **new (perspective-adjusted)** | **−0.157** | 0.441 / 0.535 / 0.416 — **flat** |
+
+**Distance bias reduced 78%.** Severity now tracks size rather than camera proximity, and all three
+buckets populate (28 / 26 / 27). The function signature is unchanged, so `model.py`, `detect.py` and
+`infer_service.py` needed no edits.
+
+### ⚠ What this still does NOT give you
+
+- **The score is relative, not metric.** It is proportional to real area, but the constant depends on
+  focal length and camera mount height, which we do not know. It cannot say "30 cm across".
+- **Thresholds are tertiles of that one video** (`medium > 0.208`, `high > 0.357`) — they mean "worst
+  third of what this camera saw", not an engineering standard. Recalibrate per camera via
+  `SEVERITY_MEDIUM_SCORE` / `SEVERITY_HIGH_SCORE`.
+- **`SEVERITY_HORIZON_Y` must match the camera** (default `0.0` = horizon at/above the frame top,
+  correct for downward-looking road footage; a dashcam with a visible skyline needs ~`0.5`). A wrong
+  horizon means a wrong correction.
+- There is still **no ground truth** — nobody has measured a real pothole and checked its bucket. The
+  metric upgrade path remains monocular depth (MiDaS / Depth-Anything) or camera calibration.
+
+So A-5 is **improved and honest, not solved**: the dominant defect (distance ≡ severity) is fixed and
+measured; absolute calibration is still open.
 
 ## What would actually move the number
 

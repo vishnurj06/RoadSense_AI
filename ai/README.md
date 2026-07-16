@@ -89,6 +89,16 @@ three produced your map pins.
 | `MODEL_PATH` | `weights/best.pt` | **Swap this to deploy a new model. No code changes needed.** |
 | `MODEL_VERSION` | `roadsense-yolov8s-v3-merged` | Returned on every response. **Bump on every retrain.** |
 | `CONF_THRESHOLD` | `0.29` | F1-optimal on the v3-merged val set. Detections below this are dropped; the backend never re-filters. |
+| `SEVERITY_HORIZON_Y` | `0.0` | Horizon row as a fraction of image height. **Must match the camera** — `0.0` suits footage shot looking down; a dashcam with a visible skyline needs ~`0.5`. |
+| `SEVERITY_MEDIUM_SCORE` | `0.208` | Perspective-adjusted size score above which a detection is `medium`. |
+| `SEVERITY_HIGH_SCORE` | `0.357` | …and above which it is `high`. Both are **relative** tertiles calibrated on `potholevideos.mp4` — recalibrate per camera. |
+
+### Severity is perspective-corrected (A-5)
+
+`severity.py` does **not** classify on raw bbox area — that provably measured *how close the camera
+was* (`corr(depth, severity) = +0.711`), so the same pothole scored `low` far away and `high` up
+close. It now divides apparent area by the squared distance-below-horizon of the bbox's bottom edge,
+which drops that bias to `−0.157`. The score is **relative, not metric** — see `experiments.md`.
 
 ## Layout
 
