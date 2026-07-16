@@ -4,15 +4,18 @@ Every training run gets a row. **All metrics below are on the `valid` split (118
 rows are comparable to each other. Test-split numbers are called out separately — never compare a
 test number against a val number.
 
-| run | base | epochs | imgsz | device | precision | recall | mAP50 | mAP50-95 |
-|---|---|---|---|---|---|---|---|---|
-| `train-2` (baseline) | yolov8n | 12 | 416 | CPU | 0.588 | 0.542 | 0.556 | 0.239 |
-| `v2-2` (current `best.pt`) | yolov8s | 48 of 100 | 640 | T4 GPU | 0.664 | 0.472 | **0.550** | 0.234 |
+| run | base | epochs | imgsz | device | classes | mAP50 | notes |
+|---|---|---|---|---|---|---|---|
+| `train-2` (baseline) | yolov8n | 12 | 416 | CPU | pothole | 0.556 | val split |
+| `v2-2` | yolov8s | 48/100 | 640 | T4 | pothole | 0.550 | val; did **not** beat baseline |
+| `v3-rdd-india` (rejected) | yolov8s | 85/100 | 640 | T4 | pothole+crack | 0.427 | pothole AP 0.377 — regressed on real footage |
+| `v3-merged` (**current `best.pt`**) | yolov8s | ~60/100 | 640 | T4 | pothole+crack | 0.480 | pothole AP **0.460**, crack AP **0.499** |
 
-`v2-2` also scores **mAP50 0.468 / mAP50-95 0.179 on the `test` split** (59 images, 189 instances).
-That is a *different split*, not a regression from 0.556.
+**Current deployment: `v3-merged`.** `MODEL_VERSION=roadsense-yolov8s-v3-merged`, `CONF_THRESHOLD=0.29`
+(F1-optimal, 0.52 at 0.292). Old `v2-2` kept at `weights/best-yolov8s-v2-2.pt`.
 
-**Phase-2 target: mAP50 ≥ 0.75. Not met, and this run tells us why not.**
+**Phase-2 target mAP50 ≥ 0.75 still not met on the RDD test set** — but on real footage the pothole
+detection is now the best we've had (see below), and the crack class exists for the first time.
 
 ---
 
@@ -109,6 +112,42 @@ The product is a **vehicle-mounted dashcam**: landscape, higher, further away, m
 potholes far smaller in frame. So this clip proves *the detector detects potholes*. It does **not**
 prove the detector works from a moving car. We still need real dashcam footage that contains
 potholes — that gap is open.
+
+## ✅ v3-merged — the real Phase-2 model (pothole + crack). How it was built.
+
+The two-class model went through two attempts:
+
+1. **`v3-rdd-india`** — trained on RDD2022 India alone (pothole + 3 crack types → 2 classes, + hard
+   negatives). Cracks worked, but **pothole recall regressed badly on real footage** (19/55 pothole
+   frames vs the pothole-only model's 43/55). RDD India potholes are a harder, different distribution
+   than the clean close-up potholes in `pothole-detection-3`. **Rejected — not shipped.**
+2. **`v3-merged`** — merged **`pothole-detection-3` (strong potholes) + RDD India (cracks) + hard
+   negatives**: 6,655 train images, 6,358 pothole boxes / 2,581 crack boxes. This recovered pothole
+   recall *and* kept the crack class. **Shipped.**
+
+### Head-to-head on real footage (the decider — not the RDD test AP)
+
+`potholevideos.mp4` (55 frames, real potholes) and the 57 pothole-free dashcam frames, at conf 0.30:
+
+| model | pothole frames hit (of 55) | false positives on clean road (of 57) |
+|---|---|---|
+| `v2-2` pothole-only (old deploy) | 43 | 3 |
+| `v3-rdd-india` (rejected) | 18 | 0 |
+| **`v3-merged` (shipped)** | **45** | **0** |
+
+**v3-merged is a strict upgrade over the old model**: more potholes caught (45 vs 43, and 79 raw
+detections vs 64) *and* zero false positives (vs 3). Verified end-to-end through `model.py`
+(`roadsense-yolov8s-v3-merged`, conf 0.29): fires 0.748 on a real pothole, returns `[]` on clean road.
+
+### ⚠ Honest caveat on the crack class
+
+Cracks are validated on **RDD's own test set** (AP50 **0.499**) — the class is real and works on
+RDD-style cracks. **But it is conservative**: on `potholevideos.mp4` it emits **zero** crack
+detections even at conf 0.05, because (a) that footage is potholes, not clean transverse/longitudinal
+cracks, and (b) the merge is pothole-biased (6,358 pothole boxes vs 2,581 crack). We have **not**
+independently confirmed cracks on non-RDD footage — there are no crack test images locally. So: the
+dashboard `crack` filter now *can* match, but expect it to fire only on clear RDD-style cracks until
+we test it on real crack footage. That test is the open item for cracks.
 
 ## Comparison with the Phase-1 Roboflow hosted API
 
