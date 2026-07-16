@@ -44,5 +44,12 @@ data/
 datasets/
 backend/static/uploads/
 
+# AI frames & dataset archives — regenerable from the source videos via
+# extract_frames.py, so they never belong in git (they are ~113 files / 23 MB).
+ai/test_images/
+ai/pothole_frames/
+ai/demo_potholes_annotated.mp4
+*.zip
+
 # Sandbox / temporary folders
 roadsense-ai/
