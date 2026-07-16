@@ -262,6 +262,61 @@ buckets populate (28 / 26 / 27). The function signature is unchanged, so `model.
 So A-5 is **improved and honest, not solved**: the dominant defect (distance ≡ severity) is fixed and
 measured; absolute calibration is still open.
 
+## A3-6 — latency: the ONNX/OpenVINO plan was wrong, and we already pass
+
+**Two of my own claims were false. Both are corrected here.**
+
+### False claim 1: "103 ms/frame — currently failing"
+
+That came from a sloppy benchmark (8 runs, 1 warmup). Measured properly — **25 runs, 8 warmups,
+median, through `model.predict()` (the path `model.py` actually calls)**:
+
+    PyTorch (.pt):  93.7 ms   -> PASSES the PRD's <100 ms/frame
+
+**Hardware, because "<100 ms" is meaningless without it:** AMD Ryzen 5 5600H, 12 cores, torch using
+6 threads, CPU only, imgsz 640, one 474x854 image, warm.
+
+### False claim 2: "export ONNX/OpenVINO — typically 2-3x on CPU"
+
+Received wisdom. **Tested, and it is backwards on this hardware.** All three through the production
+path, **interleaved** round-robin so thermal drift hits each equally:
+
+| backend | median | vs PyTorch | <100 ms? |
+|---|---|---|---|
+| **PyTorch (.pt)** | **93.7 ms** | 1.00x | ✅ |
+| ONNX Runtime 1.27 | 132.3 ms | **1.41x SLOWER** | ❌ |
+| OpenVINO 2026.2 | 177.2 ms | **1.89x SLOWER** | ❌ |
+
+Both exports also **changed the output** (pothole conf 0.75 → 0.73). A faster wrong answer is not a
+win — and these were not even faster.
+
+**Why (best explanation):** torch 2.13's CPU backend is oneDNN-optimised and already strong on a
+modern Ryzen. OpenVINO is Intel-tuned and gives up much of its advantage on AMD. Neither export
+beats it here.
+
+**A methodological trap worth recording:** a raw forward-pass comparison says the *opposite* —
+ONNX 156 ms vs PyTorch 205 ms, i.e. ONNX "1.32x faster". That is wrong because `YOLO().model` is
+**unfused**, while exporting fuses conv+BN. Benchmarking the unfused module handicaps PyTorch and
+flips the conclusion. **Always measure the path you actually deploy.**
+
+**Decision: do NOT ship ONNX or OpenVINO.** No speedup, changed outputs, two extra dependencies.
+`ai/requirements.txt` is untouched; the export artifacts were deleted (regenerable in ~2 s).
+
+### What the latency picture actually is
+
+- ✅ **The PRD's <100 ms/frame is met today** — 93.7 ms, on the hardware named above.
+- ⚠️ **The margin is 6%.** This is one image, warm, with **no depth and no segmentation**.
+- ⚠️ **A3-3 (depth) and A3-4 (segmentation) each add a second model per frame and will blow it.**
+  The mitigation is already in the plan: run depth **only on frames that already have a detection**.
+  If that is not enough, the answer is a GPU / Jetson (the PRD lists both) — **not** an ONNX export.
+- ⚠️ **93.7 ms/frame ≈ 10 fps. It is NOT real-time for 30 fps dashcam video** — that would need
+  ~33 ms. The PRD asks for <100 ms and we meet *that*, but nobody should read it as "runs live on a
+  dashcam". Batch/sampled frames only.
+
+**Untested levers, if depth+segmentation do blow the budget:** INT8 quantisation (real speedup,
+costs accuracy, needs calibration data), a smaller imgsz (costs small-object recall — bad for
+potholes), `torch.compile`, or GPU/edge hardware.
+
 ## What would actually move the number
 
 In rough order of expected payoff:
