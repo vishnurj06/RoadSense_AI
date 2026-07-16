@@ -79,11 +79,14 @@ Last audited: **2026-07-16** (full codebase read-through by Senior Technical Arc
   asset without auth, so the script calls that out explicitly.
 - Weights still never enter git — only the registry entry does.
 
+- **Released:** tag `model-v3-merged` → asset `best-v3-merged.pt`. GitHub's displayed SHA256 matches
+  `models.json` exactly, so the fetcher's check will pass.
+
 > ⚠️ **`best.pt` is gitignored** — the repo alone cannot tell you the model's class count or version.
 > That gap caused the 2026-07-16 audit to report the model as single-class, **and** caused the
 > `3a3aa52`/`1f01eb2` merge to revert A-5 (the person merging could not run the AI code to see which
-> side of the conflict was current). **`fetch_model.py` + `models.json` exist to end this** — use them
-> instead of asking. *(Pending: Person A must publish the release asset — see `ai/README.md`.)*
+> side of the conflict was current). **`fetch_model.py` + `models.json` end this — use them instead
+> of asking.** *(D-1 closed 2026-07-16.)*
 
 ### I. GPS (A-6)
 - `ai/gps.py` resolves each report's position from **EXIF GPS tags**, else an interpolated **GPX
