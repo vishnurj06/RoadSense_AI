@@ -12,7 +12,38 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Then put your trained weights at `ai/weights/best.pt` (gitignored — weights never go in git).
+## Get the model — one command (A3-7)
+
+Weights are gitignored, so a fresh clone has no model. **Don't ask Person A for a file — fetch it:**
+
+```bash
+export GITHUB_TOKEN=ghp_xxx     # Windows: set GITHUB_TOKEN=ghp_xxx   (repo is private)
+python fetch_model.py           # downloads the default model -> weights/best.pt, SHA256-verified
+python fetch_model.py --list    # every version + its real numbers and known weaknesses
+```
+
+`models.json` is the registry — it is the **single source of truth** for which model is current, what
+classes it has, its `CONF_THRESHOLD`, its real-footage numbers, and what is wrong with it. The
+fetcher verifies SHA256 before installing and **refuses** a mismatch rather than leaving you with a
+model that isn't the one in the registry.
+
+> **Why this exists:** `best.pt` being gitignored meant the repo could not tell you what the model
+> was. That caused a codebase audit to report the model as single-class when it had two, and caused
+> a merge to revert A-5 — in both cases because the person could not load the weights to check.
+> `fetch_model.py` ends that. See the Phase 3 doc §2.1.
+
+### Publishing a new model (Person A)
+
+1. Train, then verify on **real footage** — the ship gate is beating the current model there
+   (45/55 pothole frames, 0 false positives), **not** RDD test AP.
+2. Hash it: `python -c "import hashlib;print(hashlib.sha256(open('weights/best.pt','rb').read()).hexdigest())"`
+3. GitHub → **Releases → Draft a new release** → tag `model-<version>` → attach the `.pt`.
+4. Add an entry to `models.json` (url, sha256, size_bytes, classes, conf_threshold, metrics,
+   **known_weaknesses**) and move `default` to it. **Never point an entry at an artifact you have
+   not hashed.**
+5. Verify from a clean path: `python fetch_model.py --version <version> --dest /tmp/check.pt`
+
+Weights still never go in git — only the registry entry does.
 
 ## Run the inference service — this is what the backend calls
 
@@ -104,12 +135,14 @@ which drops that bias to `−0.157`. The score is **relative, not metric** — s
 
 ```
 model.py           model loading + detection → Contract v2 shape (shared)
-severity.py        severity heuristic (shared, so batch and service can't drift)
+severity.py        perspective-corrected severity (shared, so batch and service can't drift)
 gps.py             real GPS: EXIF tags + GPX track interpolation (task A-6)
 infer_service.py   FastAPI service — POST /infer, GET /health
 detect.py          batch runner: images → report JSONs
 extract_frames.py  video → frames
-weights/           gitignored
+models.json        model registry — the source of truth for what the model IS (A3-7)
+fetch_model.py     download + SHA256-verify a model by version (A3-7)
+weights/           gitignored — populate with `python fetch_model.py`
 ```
 
 ## Model status — read before quoting any number. See `experiments.md`.

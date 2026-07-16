@@ -69,9 +69,21 @@ Last audited: **2026-07-16** (full codebase read-through by Senior Technical Arc
   (vs 43) with **0** false positives on clean road (vs 3). Crack AP50 0.499 on RDD test, but the
   class is conservative and unverified on non-RDD crack footage. See `ai/experiments.md`.
 
+### H2. Model registry (A3-7) — **how to get the weights, no longer "ask Person A"**
+- **`ai/models.json`** is the registry: the single source of truth for which model is current, its
+  classes, `CONF_THRESHOLD`, real-footage numbers and **known weaknesses**.
+- **`python fetch_model.py`** downloads the default model to `weights/best.pt` and **verifies SHA256**
+  before installing; a mismatch is a hard error (exit 1), never a warning.
+  `python fetch_model.py --list` prints every version with its real numbers.
+- Repo is private → set `GITHUB_TOKEN` (repo scope). GitHub returns **404, not 401**, for a private
+  asset without auth, so the script calls that out explicitly.
+- Weights still never enter git — only the registry entry does.
+
 > ⚠️ **`best.pt` is gitignored** — the repo alone cannot tell you the model's class count or version.
-> Anyone auditing the AI track must get the weights from Person A. (This is why the 2026-07-16 audit
-> reported the model as single-class.)
+> That gap caused the 2026-07-16 audit to report the model as single-class, **and** caused the
+> `3a3aa52`/`1f01eb2` merge to revert A-5 (the person merging could not run the AI code to see which
+> side of the conflict was current). **`fetch_model.py` + `models.json` exist to end this** — use them
+> instead of asking. *(Pending: Person A must publish the release asset — see `ai/README.md`.)*
 
 ### I. GPS (A-6)
 - `ai/gps.py` resolves each report's position from **EXIF GPS tags**, else an interpolated **GPX

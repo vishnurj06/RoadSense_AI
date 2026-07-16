@@ -1,0 +1,45 @@
+{
+  "_readme": [
+    "Model registry for RoadSense AI (task A3-7). This file is the single source of truth for",
+    "'which model is current and where do I get it'. Weights are gitignored, so WITHOUT this file",
+    "the repo cannot tell you what the model is — that gap already caused two wrong audits and one",
+    "botched merge. See RoadSense_AI_Phase3_Workflow_and_Task_Split.md §2.1.",
+    "",
+    "Consumers: run `python fetch_model.py` (no arguments) to get the default model, verified by",
+    "SHA256. Run `python fetch_model.py --list` to see every version with its real numbers.",
+    "",
+    "Person A: on every release, add an entry here and publish the asset. Never point an entry at",
+    "an artifact you have not hashed."
+  ],
+  "default": "roadsense-yolov8s-v3-merged",
+  "models": {
+    "roadsense-yolov8s-v3-merged": {
+      "released": "2026-07-16",
+      "file": "best-v3-merged.pt",
+      "url": "https://github.com/vishnurj06/RoadSense_AI/releases/download/model-v3-merged/best-v3-merged.pt",
+      "sha256": "b01bf3a7950f5f51dad57e99c6c309a8584358841b29dbf3f724582678d51274",
+      "size_bytes": 22523178,
+      "base": "yolov8s",
+      "imgsz": 640,
+      "classes": ["pothole", "crack"],
+      "conf_threshold": 0.29,
+      "trained_on": "pothole-detection-3 (1,230) + RDD2022 India + 57 hard negatives = 6,655 images",
+      "metrics": {
+        "_note": "RDD test-split AP. NOT comparable across runs with different test sets — the real-footage numbers below are the ship gate.",
+        "rdd_test_map50": 0.48,
+        "rdd_test_ap50_pothole": 0.46,
+        "rdd_test_ap50_crack": 0.499,
+        "real_footage_pothole_frames_hit": "45/55",
+        "real_footage_false_positives": "0/57",
+        "f1_optimal_conf": 0.292
+      },
+      "known_weaknesses": [
+        "Crack class is CONSERVATIVE: AP50 0.499 on RDD's test set, but emits ZERO cracks on potholevideos.mp4 even at conf 0.05. It is pothole-biased (6,358 pothole vs 2,581 crack boxes in training). Not validated on real crack footage.",
+        "Never validated from a moving vehicle. All real-footage evidence is handheld pedestrian-height video (potholevideos.mp4). The product is a vehicle-mounted dashcam.",
+        "mAP50 >= 0.75 (the Phase-2 target) is NOT met and is likely near-SOTA for multi-class road damage. See experiments.md.",
+        "Severity is RELATIVE, not metric. Thresholds are tertiles of one video; SEVERITY_HORIZON_Y must match the camera (0.0 = horizon at/above frame top; a dashcam with a visible skyline needs ~0.5)."
+      ],
+      "supersedes": "roadsense-yolov8s-v2"
+    }
+  }
+}
