@@ -4,20 +4,6 @@ Every training run gets a row. **All metrics below are on the `valid` split (118
 rows are comparable to each other. Test-split numbers are called out separately — never compare a
 test number against a val number.
 
-<<<<<<< HEAD
-| run | base | epochs | imgsz | device | classes | mAP50 | notes |
-|---|---|---|---|---|---|---|---|
-| `train-2` (baseline) | yolov8n | 12 | 416 | CPU | pothole | 0.556 | val split |
-| `v2-2` | yolov8s | 48/100 | 640 | T4 | pothole | 0.550 | val; did **not** beat baseline |
-| `v3-rdd-india` (rejected) | yolov8s | 85/100 | 640 | T4 | pothole+crack | 0.427 | pothole AP 0.377 — regressed on real footage |
-| `v3-merged` (**current `best.pt`**) | yolov8s | ~60/100 | 640 | T4 | pothole+crack | 0.480 | pothole AP **0.460**, crack AP **0.499** |
-
-**Current deployment: `v3-merged`.** `MODEL_VERSION=roadsense-yolov8s-v3-merged`, `CONF_THRESHOLD=0.29`
-(F1-optimal, 0.52 at 0.292). Old `v2-2` kept at `weights/best-yolov8s-v2-2.pt`.
-
-**Phase-2 target mAP50 ≥ 0.75 still not met on the RDD test set** — but on real footage the pothole
-detection is now the best we've had (see below), and the crack class exists for the first time.
-=======
 | run | base | epochs | imgsz | device | precision | recall | mAP50 | mAP50-95 |
 |---|---|---|---|---|---|---|---|---|
 | `train-2` (baseline) | yolov8n | 12 | 416 | CPU | 0.588 | 0.542 | 0.556 | 0.239 |
@@ -27,7 +13,6 @@ detection is now the best we've had (see below), and the crack class exists for 
 That is a *different split*, not a regression from 0.556.
 
 **Phase-2 target: mAP50 ≥ 0.75. Not met, and this run tells us why not.**
->>>>>>> origin/feat/ai-phase2
 
 ---
 
@@ -125,45 +110,6 @@ potholes far smaller in frame. So this clip proves *the detector detects pothole
 prove the detector works from a moving car. We still need real dashcam footage that contains
 potholes — that gap is open.
 
-<<<<<<< HEAD
-## ✅ v3-merged — the real Phase-2 model (pothole + crack). How it was built.
-
-The two-class model went through two attempts:
-
-1. **`v3-rdd-india`** — trained on RDD2022 India alone (pothole + 3 crack types → 2 classes, + hard
-   negatives). Cracks worked, but **pothole recall regressed badly on real footage** (19/55 pothole
-   frames vs the pothole-only model's 43/55). RDD India potholes are a harder, different distribution
-   than the clean close-up potholes in `pothole-detection-3`. **Rejected — not shipped.**
-2. **`v3-merged`** — merged **`pothole-detection-3` (strong potholes) + RDD India (cracks) + hard
-   negatives**: 6,655 train images, 6,358 pothole boxes / 2,581 crack boxes. This recovered pothole
-   recall *and* kept the crack class. **Shipped.**
-
-### Head-to-head on real footage (the decider — not the RDD test AP)
-
-`potholevideos.mp4` (55 frames, real potholes) and the 57 pothole-free dashcam frames, at conf 0.30:
-
-| model | pothole frames hit (of 55) | false positives on clean road (of 57) |
-|---|---|---|
-| `v2-2` pothole-only (old deploy) | 43 | 3 |
-| `v3-rdd-india` (rejected) | 18 | 0 |
-| **`v3-merged` (shipped)** | **45** | **0** |
-
-**v3-merged is a strict upgrade over the old model**: more potholes caught (45 vs 43, and 79 raw
-detections vs 64) *and* zero false positives (vs 3). Verified end-to-end through `model.py`
-(`roadsense-yolov8s-v3-merged`, conf 0.29): fires 0.748 on a real pothole, returns `[]` on clean road.
-
-### ⚠ Honest caveat on the crack class
-
-Cracks are validated on **RDD's own test set** (AP50 **0.499**) — the class is real and works on
-RDD-style cracks. **But it is conservative**: on `potholevideos.mp4` it emits **zero** crack
-detections even at conf 0.05, because (a) that footage is potholes, not clean transverse/longitudinal
-cracks, and (b) the merge is pothole-biased (6,358 pothole boxes vs 2,581 crack). We have **not**
-independently confirmed cracks on non-RDD footage — there are no crack test images locally. So: the
-dashboard `crack` filter now *can* match, but expect it to fire only on clear RDD-style cracks until
-we test it on real crack footage. That test is the open item for cracks.
-
-=======
->>>>>>> origin/feat/ai-phase2
 ## Comparison with the Phase-1 Roboflow hosted API
 
 The 57 committed JSONs in `ai/outputs/` (produced in Phase 1 via `detect.roboflow.com`) contain
@@ -184,102 +130,6 @@ The baseline is kept at `weights/best-yolov8n-v1.pt` so the comparison above sta
 is honestly sourced — but as the table above shows, it does not stop false positives on footage that
 looks nothing like the training set.
 
-<<<<<<< HEAD
-## Note on `docs/codebase_audit_report.md` (2026-07-16) — stale on the AI track
-
-That audit predates / could not see this model, and three of its AI findings are **wrong now**:
-
-| Audit claim | Actual |
-|---|---|
-| "A-3 ❌ NOT DONE — model is still single-class" | **Done.** `v3-merged` ships `pothole` + `crack`. |
-| "the `crack` filter still matches nothing" | The class exists (RDD test AP 0.499). |
-| "`CONF_THRESHOLD = 0.30`" / "MODEL_VERSION may be `yolov8n-v1`" | `0.29` / `roadsense-yolov8s-v3-merged`. |
-
-**Why it got this wrong is worth understanding:** `weights/best.pt` is **gitignored**, so a reader
-with only the repo *cannot* see how many classes the model has — the audit itself says "unable to
-verify". Anyone auditing the AI track needs the weights handed over separately. The audit's
-platform findings are unaffected.
-
-Its remaining AI criticism that **is** fair: mAP50 ≥ 0.75 is still unmet (a genuine data bottleneck).
-GPS (A-6) and severity (A-5) are both now addressed — see below.
-
-## A-6 — GPS is real now (was: random jitter near Mumbai)
-
-`detect.py` no longer silently fabricates coordinates. `gps.py` resolves each report from, in order:
-
-1. **EXIF GPS** on the image (phone photos), including `GPSSpeed` when present.
-2. **A GPX track** interpolated to the frame's timestamp, with `speed_kmph` derived from the
-   surrounding segment. Frames outside the track clamp to its ends instead of inventing a position.
-3. **Faked jitter** — only as a last resort, and now it is **loud**: the run prints
-   `WARNING: N of M reports carry FAKED GPS` and a `GPS sources: {...}` breakdown, so fake pins can
-   never quietly pass for real ones in a demo.
-
-`speed_kmph` (Contract v2 §4.2) is now emitted — it was previously missing from every report
-entirely. It is `null` when genuinely unknown rather than guessed.
-
-Verified: a synthetic 6-point track (11.12 m/s) returns exactly **40.0 km/h**, midpoint
-interpolation is exact to 1e-7°, out-of-range timestamps clamp correctly, and images without EXIF
-degrade to `None` instead of raising.
-
-**Still open for GPS:** we have no real GPX track or GPS-tagged footage yet, so the *code* path is
-verified but has never run against a real recorded drive. `dashcam.mp4` has coordinates burned into
-the video as pixels (not EXIF), which would need OCR — not worth it. The honest status is: the
-faking is gone as a silent default, and real GPS works the moment someone records a drive with a
-GPX logger.
-
-## A-5 — severity was measuring camera distance, not pothole size
-
-Measured on **81 real detections** (v3-merged @ conf 0.29 over `potholevideos.mp4`), the old
-bbox-area heuristic scored **`corr(depth-position, area_ratio) = +0.711`**, and its buckets were an
-almost perfect ladder of *how close the camera was*:
-
-| bucket (old) | n | mean depth-position (0 = far, 1 = near) |
-|---|---|---|
-| low | 24 | 0.187 |
-| medium | 19 | 0.367 |
-| high | 38 | 0.684 |
-
-**The same pothole scored `low` from far away and `high` from up close.** For a system whose entire
-job is prioritising repairs, that is worse than useless — it is confidently wrong.
-
-*(Two older claims are now stale: the Phase-1 audit's "the `medium` band has never fired" and
-`claude.md`'s "all `potholevideos.mp4` detections are low". Under v3-merged all three buckets fire.
-The distribution was never the real problem — the distance bias was.)*
-
-### The fix: perspective normalisation
-
-A pothole lies on the road plane, so pinhole geometry applies: depth `Z ~ 1/(y - y_horizon)`, and a
-real area `A` projects to apparent area `a ~ A/Z²`. Therefore `A ~ a / (y - y_horizon)²`.
-`severity.py` now divides apparent area by the squared distance-below-horizon of the bbox's **bottom
-edge** (the road-contact row). Same 81 detections:
-
-| | corr(depth, score) | bucket mean depth-positions |
-|---|---|---|
-| old (raw bbox area) | **+0.711** | 0.187 / 0.367 / 0.684 — a distance ladder |
-| **new (perspective-adjusted)** | **−0.157** | 0.441 / 0.535 / 0.416 — **flat** |
-
-**Distance bias reduced 78%.** Severity now tracks size rather than camera proximity, and all three
-buckets populate (28 / 26 / 27). The function signature is unchanged, so `model.py`, `detect.py` and
-`infer_service.py` needed no edits.
-
-### ⚠ What this still does NOT give you
-
-- **The score is relative, not metric.** It is proportional to real area, but the constant depends on
-  focal length and camera mount height, which we do not know. It cannot say "30 cm across".
-- **Thresholds are tertiles of that one video** (`medium > 0.208`, `high > 0.357`) — they mean "worst
-  third of what this camera saw", not an engineering standard. Recalibrate per camera via
-  `SEVERITY_MEDIUM_SCORE` / `SEVERITY_HIGH_SCORE`.
-- **`SEVERITY_HORIZON_Y` must match the camera** (default `0.0` = horizon at/above the frame top,
-  correct for downward-looking road footage; a dashcam with a visible skyline needs ~`0.5`). A wrong
-  horizon means a wrong correction.
-- There is still **no ground truth** — nobody has measured a real pothole and checked its bucket. The
-  metric upgrade path remains monocular depth (MiDaS / Depth-Anything) or camera calibration.
-
-So A-5 is **improved and honest, not solved**: the dominant defect (distance ≡ severity) is fixed and
-measured; absolute calibration is still open.
-
-=======
->>>>>>> origin/feat/ai-phase2
 ## What would actually move the number
 
 In rough order of expected payoff:
