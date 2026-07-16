@@ -17,10 +17,18 @@ cp .env.example .env
 Weights are gitignored, so a fresh clone has no model. **Don't ask Person A for a file — fetch it:**
 
 ```bash
-export GITHUB_TOKEN=ghp_xxx     # Windows: set GITHUB_TOKEN=ghp_xxx   (repo is private)
+# the repo is private, so a token is required:
+export GITHUB_TOKEN=ghp_xxx        # bash / macOS / Linux
+$env:GITHUB_TOKEN = "ghp_xxx"      # PowerShell   (NOT `set` — that is cmd.exe syntax)
+set GITHUB_TOKEN=ghp_xxx           # cmd.exe
+
 python fetch_model.py           # downloads the default model -> weights/best.pt, SHA256-verified
 python fetch_model.py --list    # every version + its real numbers and known weaknesses
 ```
+
+**Which token?** A **classic** token with `repo` scope works for everyone. A *fine-grained* token is
+scoped to a **resource owner** and can only reach repos that owner owns — so it works for the repo
+owner, but **not** for a collaborator. If you are a collaborator, use classic.
 
 `models.json` is the registry — it is the **single source of truth** for which model is current, what
 classes it has, its `CONF_THRESHOLD`, its real-footage numbers, and what is wrong with it. The
