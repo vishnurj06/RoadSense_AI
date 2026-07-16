@@ -149,6 +149,52 @@ independently confirmed cracks on non-RDD footage — there are no crack test im
 dashboard `crack` filter now *can* match, but expect it to fire only on clear RDD-style cracks until
 we test it on real crack footage. That test is the open item for cracks.
 
+## `Pothole_new_india_360p.mp4` — third positive set, and the best result yet
+
+640x360 landscape, 40 s, 25 fps → 67 frames in `ai/india_frames/`. An Indian road covered in large
+potholes, **many of them water-filled**. v3-merged at the deployed `conf=0.29`:
+
+| footage | frames hit | max conf |
+|---|---|---|
+| `potholevideos.mp4` | 45 / 55 (82%) | 0.755 |
+| **`Pothole_new_india_360p.mp4`** | **61 / 67 (91%)** | **0.882** |
+
+Even at `conf=0.50` it still hits 54/67. **This is the model's strongest showing on any real footage**,
+and it is a genuinely independent third test set.
+
+### The interesting part: water-filled potholes work
+
+The boxes land on the flooded potholes. That was not a given — a water-filled pothole is bright and
+reflective, the visual *opposite* of the dark holes the training data is full of. The model was never
+trained on them as a class and still finds them, labelling them `pothole` (which is defensible: they
+*are* potholes).
+
+**This matters for A3-1.** `water_filled_pothole` is one of the 7 PRD classes, and the Phase-3 plan
+called it *"the hardest — likely needs custom collection"*. We now have footage of it, and evidence
+the detector already sees them. **But 67 frames from one scene is not a training set** — it is enough
+to evaluate, not to teach a new class.
+
+Recall is still visibly imperfect: several potholes per frame go unboxed (e.g. the dark one top-left
+of `frame_0000`), consistent with the measured recall of ~0.44.
+
+### ⚠ It does NOT close the dashcam gap — the geometry says so
+
+It *looks* more dashcam-like (landscape, forward motion) but it is the **same low, road-filling
+camera** as the handheld clip. Vertical position of detections:
+
+| footage | min | median | max |
+|---|---|---|---|
+| `Pothole_new_india_360p.mp4` | 0.06 | **0.39** | 0.92 |
+| `potholevideos.mp4` | 0.07 | **0.41** | 0.91 |
+
+A windshield-mounted dashcam would put the horizon mid-frame and cluster potholes **low** (~0.6-0.9).
+These two are statistically the same camera height. So this is a **second sample of the same domain**,
+not a new one.
+
+**Still open, unchanged:** no GPS (so A3-5's GPS validation is untouched), and no true
+vehicle-mounted footage. **Every accuracy claim we have still comes from low, close-range video.**
+Recording a real drive remains the cheapest way to close that.
+
 ## Comparison with the Phase-1 Roboflow hosted API
 
 The 57 committed JSONs in `ai/outputs/` (produced in Phase 1 via `detect.roboflow.com`) contain

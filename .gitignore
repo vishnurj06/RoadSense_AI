@@ -15,6 +15,7 @@ __pycache__/
 ai/weights/
 ai/test_images/
 ai/pothole_frames/
+ai/india_frames/
 runs/
 *.pt
 *.mp4

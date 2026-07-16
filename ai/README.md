@@ -176,7 +176,12 @@ Two things not to trip over:
 
 The two test sets do different jobs:
 
-| footage | frames | measures | good result |
-|---|---|---|---|
-| `potholevideos.mp4` | `pothole_frames/` | pothole detection | **many** detections |
-| `dashcam.mp4` | `test_images/` | false-positive rate | **zero** detections |
+| footage | frames | measures | good result | current |
+|---|---|---|---|---|
+| `potholevideos.mp4` | `pothole_frames/` | pothole detection | **many** detections | 45/55 |
+| `Pothole_new_india_360p.mp4` | `india_frames/` | pothole detection (incl. **water-filled**) | **many** detections | **61/67** |
+| `dashcam.mp4` | `test_images/` | false-positive rate | **zero** detections | **0/57** ✅ |
+
+⚠️ **Both positive sets are the same camera domain** — low and close to the road (median detection
+height 0.39 vs 0.41). Neither is windshield-mounted dashcam POV, which is the actual product. **No
+accuracy claim here has been validated from a moving vehicle.**
