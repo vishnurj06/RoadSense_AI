@@ -90,11 +90,14 @@ Last audited: **2026-07-16** (full codebase read-through by Senior Technical Arc
   asset without auth, so the script calls that out explicitly.
 - Weights still never enter git — only the registry entry does.
 
-- **Released:** tag `model-v3-merged` → asset `best-v3-merged.pt` (proven end-to-end with a real
-  token: downloads, SHA256-verifies, loads).
-  ⚠️ **`model-v4-all` is registered in `models.json` but the release asset is NOT published yet** —
-  Person A must upload `best-v4-all.pt` under tag `model-v4-all`, or `fetch_model.py` will 404 on the
-  new default. Until then, `--version roadsense-yolov8s-v3-merged` still works.
+- **Released, both proven end-to-end with a real token** (downloads → SHA256-verifies → loads as a
+  working model):
+  | version | tag | asset | status |
+  |---|---|---|---|
+  | `roadsense-yolov8s-v4-all` | `model-v4-all` | `best-v4-all.pt` | ✅ **current default** |
+  | `roadsense-yolov8s-v3-merged` | `model-v3-merged` | `best-v3-merged.pt` | ✅ previous, still fetchable |
+
+  `python fetch_model.py` gets the default; `--version <name>` gets any other.
 - **Token:** a collaborator needs a **classic** token with `repo` scope — a *fine-grained* token is
   scoped to its resource owner and cannot see a repo owned by someone else. The owner can use either.
 
