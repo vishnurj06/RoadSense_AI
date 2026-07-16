@@ -187,10 +187,14 @@ Last audited: **2026-07-16** (full codebase read-through by Senior Technical Arc
 | ~~G-3~~ | ~~GPS is faked (Mumbai random jitter)~~ | ✅ Closed | Person A | **Done (A-6).** `ai/gps.py` — EXIF + GPX interpolation + `speed_kmph`; faking is now a loudly-warned last resort. Needs a real recorded drive to exercise end-to-end. |
 | ~~G-4~~ | ~~Severity heuristic unvalidated~~ | ✅ Closed | Person A | **Done (A-5).** Validated on 81 real detections: the old heuristic was measuring camera distance (corr +0.711), now perspective-normalised (−0.157). Residual: score is relative, not metric — thresholds need per-camera calibration. |
 | G-9 | `crack` class is conservative / unverified in the field | 🟡 Medium | Person A | Validated on RDD test (AP 0.499) but emits no cracks on `potholevideos.mp4`. Needs real crack footage to confirm. |
-| G-5 | `GET /admin/system-health` returns hardcoded values | 🟢 Low | Person B | CPU/memory/disk are fake constants, not real psutil reads. |
+| G-5 | `GET /admin/system-health` returns hardcoded values | 🟡 Medium | Person B | **Verified 2026-07-16:** `main.py:902` returns literal `cpu_usage_pct: 34.5` etc., comment says "Simulated system stats". `psutil` not in requirements. An admin will trust these numbers. |
 | G-6 | No fleet-specific backend endpoints | 🟢 Low | Person B | Fleet dashboard derives data from `vehicle_id` on reports — no registry API. |
 | G-7 | `page.js` is 1,064 lines — growing unwieldy | 🟢 Low | Person B | Refactor into role-specific sub-components before Phase 3 frontend work. |
 | G-8 | `task.md` is stale | 🟢 Low | — | Shows B-5/B-6 unchecked. `claude.md` is the canonical source. |
+| ~~G-10~~ | ~~`POST /detect-image` defined twice — **CI was red** (`ruff F811`)~~ | ✅ Fixed `780057d` | Person B (verify) | Merge artifact from `3a3aa52`. Kept the handler at 441 (S3 + PostGIS clustering + cache invalidation); removed 711 (older B-1 with none of those). It was already dead code — FastAPI matches the first route — so zero runtime change. **B: confirm this was your intended handler.** |
+| **G-11** | 🔴 **Stale `feat/ai-phase2` branch is a landmine** | 🔴 High | Both | It holds pre-v3 `ai/` files. Merging it into `main` (`3a3aa52`) reverted A-5 and left `ai/detect.py` with raw conflict markers — `main` was tagged "phase 2 signoff" while it **did not parse** (fixed in `42b4edd`). **Delete the branch.** |
+| **G-12** | 🔴 **CI does not check `ai/` at all** | 🔴 High | Person B | CI runs `ruff check backend/` only. A `SyntaxError` in `ai/detect.py` reached `main` with **green CI**. Add at minimum `python -m compileall ai backend`. |
+| **G-13** | Weights still not handed to Person B | 🔴 High | Person A | Root cause of the two wrong AI audits *and* of G-11 (B cannot run the AI code, so cannot know which side of an `ai/` conflict is current). 2-minute fix, still open. |
 
 ---
 
