@@ -171,6 +171,50 @@ looks nothing like the training set.
 
 ## What would actually move the number
 
+## Note on `docs/codebase_audit_report.md` (2026-07-16) — stale on the AI track
+
+That audit predates / could not see this model, and three of its AI findings are **wrong now**:
+
+| Audit claim | Actual |
+|---|---|
+| "A-3 ❌ NOT DONE — model is still single-class" | **Done.** `v3-merged` ships `pothole` + `crack`. |
+| "the `crack` filter still matches nothing" | The class exists (RDD test AP 0.499). |
+| "`CONF_THRESHOLD = 0.30`" / "MODEL_VERSION may be `yolov8n-v1`" | `0.29` / `roadsense-yolov8s-v3-merged`. |
+
+**Why it got this wrong is worth understanding:** `weights/best.pt` is **gitignored**, so a reader
+with only the repo *cannot* see how many classes the model has — the audit itself says "unable to
+verify". Anyone auditing the AI track needs the weights handed over separately. The audit's
+platform findings are unaffected.
+
+Its remaining AI criticisms **are** fair: mAP50 ≥ 0.75 is still unmet, and severity (A-5) is still
+an unvalidated bbox heuristic. GPS (A-6) is now addressed — see below.
+
+## A-6 — GPS is real now (was: random jitter near Mumbai)
+
+`detect.py` no longer silently fabricates coordinates. `gps.py` resolves each report from, in order:
+
+1. **EXIF GPS** on the image (phone photos), including `GPSSpeed` when present.
+2. **A GPX track** interpolated to the frame's timestamp, with `speed_kmph` derived from the
+   surrounding segment. Frames outside the track clamp to its ends instead of inventing a position.
+3. **Faked jitter** — only as a last resort, and now it is **loud**: the run prints
+   `WARNING: N of M reports carry FAKED GPS` and a `GPS sources: {...}` breakdown, so fake pins can
+   never quietly pass for real ones in a demo.
+
+`speed_kmph` (Contract v2 §4.2) is now emitted — it was previously missing from every report
+entirely. It is `null` when genuinely unknown rather than guessed.
+
+Verified: a synthetic 6-point track (11.12 m/s) returns exactly **40.0 km/h**, midpoint
+interpolation is exact to 1e-7°, out-of-range timestamps clamp correctly, and images without EXIF
+degrade to `None` instead of raising.
+
+**Still open for GPS:** we have no real GPX track or GPS-tagged footage yet, so the *code* path is
+verified but has never run against a real recorded drive. `dashcam.mp4` has coordinates burned into
+the video as pixels (not EXIF), which would need OCR — not worth it. The honest status is: the
+faking is gone as a silent default, and real GPS works the moment someone records a drive with a
+GPX logger.
+
+## What would actually move the number
+
 In rough order of expected payoff:
 
 1. **Recall.** This is now the headline weakness: 0.472, and `frame_0030` misses five obvious

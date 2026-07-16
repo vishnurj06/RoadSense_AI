@@ -60,6 +60,28 @@ python detect.py --input frames/ --conf 0.3
 python extract_frames.py dashcam.mp4              # → test_images/
 ```
 
+## GPS — real, not faked (task A-6)
+
+`detect.py` resolves each report's position in this order:
+
+1. **EXIF GPS** on the image itself (phone photos) — automatic, nothing to pass.
+2. **A GPX track** sampled at the frame's timestamp — for a recorded drive:
+   ```bash
+   # --fps is the EFFECTIVE fps of the extracted frames:
+   #   source fps / every_n_frames  (extract_frames.py defaults to every 15th)
+   python detect.py --input frames/ --gpx drive.gpx --fps 2 \
+                    --start-time 2026-07-16T10:00:00+00:00
+   ```
+   Positions are linearly interpolated between track points, and `speed_kmph`
+   is derived from the surrounding segment. Frames outside the track clamp to
+   its ends rather than inventing a position.
+3. **Faked jitter near Mumbai** — last resort. The run prints a loud
+   `WARNING: N of M reports carry FAKED GPS`, and `speed_kmph` is `null`.
+   **Those coordinates are meaningless — never demo them as real.**
+
+Every run ends with a `GPS sources: {...}` line, so you always know which of the
+three produced your map pins.
+
 ## Configuration (`.env`)
 
 | Variable | Default | Notes |
@@ -73,6 +95,7 @@ python extract_frames.py dashcam.mp4              # → test_images/
 ```
 model.py           model loading + detection → Contract v2 shape (shared)
 severity.py        severity heuristic (shared, so batch and service can't drift)
+gps.py             real GPS: EXIF tags + GPX track interpolation (task A-6)
 infer_service.py   FastAPI service — POST /infer, GET /health
 detect.py          batch runner: images → report JSONs
 extract_frames.py  video → frames
