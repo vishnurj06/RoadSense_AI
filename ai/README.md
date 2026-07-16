@@ -60,6 +60,7 @@ python detect.py --input frames/ --conf 0.3
 python extract_frames.py dashcam.mp4              # → test_images/
 ```
 
+<<<<<<< HEAD
 ## GPS — real, not faked (task A-6)
 
 `detect.py` resolves each report's position in this order:
@@ -82,11 +83,14 @@ python extract_frames.py dashcam.mp4              # → test_images/
 Every run ends with a `GPS sources: {...}` line, so you always know which of the
 three produced your map pins.
 
+=======
+>>>>>>> origin/feat/ai-phase2
 ## Configuration (`.env`)
 
 | Variable | Default | Notes |
 |---|---|---|
 | `MODEL_PATH` | `weights/best.pt` | **Swap this to deploy a new model. No code changes needed.** |
+<<<<<<< HEAD
 | `MODEL_VERSION` | `roadsense-yolov8s-v3-merged` | Returned on every response. **Bump on every retrain.** |
 | `CONF_THRESHOLD` | `0.29` | F1-optimal on the v3-merged val set. Detections below this are dropped; the backend never re-filters. |
 | `SEVERITY_HORIZON_Y` | `0.0` | Horizon row as a fraction of image height. **Must match the camera** — `0.0` suits footage shot looking down; a dashcam with a visible skyline needs ~`0.5`. |
@@ -99,13 +103,20 @@ three produced your map pins.
 was* (`corr(depth, severity) = +0.711`), so the same pothole scored `low` far away and `high` up
 close. It now divides apparent area by the squared distance-below-horizon of the bbox's bottom edge,
 which drops that bias to `−0.157`. The score is **relative, not metric** — see `experiments.md`.
+=======
+| `MODEL_VERSION` | `roadsense-yolov8s-v2` | Returned on every response. **Bump on every retrain.** |
+| `CONF_THRESHOLD` | `0.30` | F1-optimal on the v2-2 val set. Detections below this are dropped; the backend never re-filters. |
+>>>>>>> origin/feat/ai-phase2
 
 ## Layout
 
 ```
 model.py           model loading + detection → Contract v2 shape (shared)
 severity.py        severity heuristic (shared, so batch and service can't drift)
+<<<<<<< HEAD
 gps.py             real GPS: EXIF tags + GPX track interpolation (task A-6)
+=======
+>>>>>>> origin/feat/ai-phase2
 infer_service.py   FastAPI service — POST /infer, GET /health
 detect.py          batch runner: images → report JSONs
 extract_frames.py  video → frames
@@ -114,6 +125,7 @@ weights/           gitignored
 
 ## Model status — read before quoting any number. See `experiments.md`.
 
+<<<<<<< HEAD
 `weights/best.pt` is **`v3-merged`** (yolov8s, 640px, `conf=0.29`) — a **2-class pothole + crack**
 model trained on `pothole-detection-3` + RDD2022 India + hard negatives.
 
@@ -132,10 +144,32 @@ Two things not to trip over:
   Judge it by the real-footage head-to-head above, not by RDD test AP.
 - **`dashcam.mp4` contains no potholes** (snowy highway), so any detection on it is a false positive.
   Use it to measure false-positive rate (good score = **zero**), never as proof the model works.
+=======
+`weights/best.pt` is the GPU-trained `v2-2` checkpoint (yolov8s, 640px, `conf=0.30`).
+
+**It detects potholes.** On `potholevideos.mp4` — a street genuinely full of them — it fires on
+**77% of frames**, boxes on target, up to **0.755** confidence. That is the clip to demo.
+
+**It misses a lot of them.** Val recall is **0.472**: one extracted frame with five obvious potholes
+returns zero detections. Precision 0.664 / recall 0.472 — *when it fires it's usually right, it just
+doesn't fire often enough.* Never state the first half without the second.
+
+Two more things not to trip over:
+
+- **`v2-2` did not beat the 12-epoch CPU baseline** (val mAP50 0.550 vs 0.556). Bigger model, 4× the
+  epochs and higher resolution changed nothing — the bottleneck is **data**, not training config.
+- **`dashcam.mp4` contains no potholes** (it's a snowy highway), so every detection on it — from this
+  model *and* from the Phase-1 Roboflow API — is a false positive. Use it to measure the
+  false-positive rate, where a good score is **zero** detections. Never as proof the model works.
+>>>>>>> origin/feat/ai-phase2
 
 The two test sets do different jobs:
 
 | footage | frames | measures | good result |
 |---|---|---|---|
+<<<<<<< HEAD
 | `potholevideos.mp4` | `pothole_frames/` | pothole detection | **many** detections |
+=======
+| `potholevideos.mp4` | `pothole_frames/` | detection ability | **many** detections |
+>>>>>>> origin/feat/ai-phase2
 | `dashcam.mp4` | `test_images/` | false-positive rate | **zero** detections |

@@ -4,6 +4,7 @@ Every training run gets a row. **All metrics below are on the `valid` split (118
 rows are comparable to each other. Test-split numbers are called out separately — never compare a
 test number against a val number.
 
+<<<<<<< HEAD
 | run | base | epochs | imgsz | device | classes | mAP50 | notes |
 |---|---|---|---|---|---|---|---|
 | `train-2` (baseline) | yolov8n | 12 | 416 | CPU | pothole | 0.556 | val split |
@@ -16,6 +17,17 @@ test number against a val number.
 
 **Phase-2 target mAP50 ≥ 0.75 still not met on the RDD test set** — but on real footage the pothole
 detection is now the best we've had (see below), and the crack class exists for the first time.
+=======
+| run | base | epochs | imgsz | device | precision | recall | mAP50 | mAP50-95 |
+|---|---|---|---|---|---|---|---|---|
+| `train-2` (baseline) | yolov8n | 12 | 416 | CPU | 0.588 | 0.542 | 0.556 | 0.239 |
+| `v2-2` (current `best.pt`) | yolov8s | 48 of 100 | 640 | T4 GPU | 0.664 | 0.472 | **0.550** | 0.234 |
+
+`v2-2` also scores **mAP50 0.468 / mAP50-95 0.179 on the `test` split** (59 images, 189 instances).
+That is a *different split*, not a regression from 0.556.
+
+**Phase-2 target: mAP50 ≥ 0.75. Not met, and this run tells us why not.**
+>>>>>>> origin/feat/ai-phase2
 
 ---
 
@@ -113,6 +125,7 @@ potholes far smaller in frame. So this clip proves *the detector detects pothole
 prove the detector works from a moving car. We still need real dashcam footage that contains
 potholes — that gap is open.
 
+<<<<<<< HEAD
 ## ✅ v3-merged — the real Phase-2 model (pothole + crack). How it was built.
 
 The two-class model went through two attempts:
@@ -149,6 +162,8 @@ independently confirmed cracks on non-RDD footage — there are no crack test im
 dashboard `crack` filter now *can* match, but expect it to fire only on clear RDD-style cracks until
 we test it on real crack footage. That test is the open item for cracks.
 
+=======
+>>>>>>> origin/feat/ai-phase2
 ## Comparison with the Phase-1 Roboflow hosted API
 
 The 57 committed JSONs in `ai/outputs/` (produced in Phase 1 via `detect.roboflow.com`) contain
@@ -169,6 +184,7 @@ The baseline is kept at `weights/best-yolov8n-v1.pt` so the comparison above sta
 is honestly sourced — but as the table above shows, it does not stop false positives on footage that
 looks nothing like the training set.
 
+<<<<<<< HEAD
 ## Note on `docs/codebase_audit_report.md` (2026-07-16) — stale on the AI track
 
 That audit predates / could not see this model, and three of its AI findings are **wrong now**:
@@ -262,6 +278,8 @@ buckets populate (28 / 26 / 27). The function signature is unchanged, so `model.
 So A-5 is **improved and honest, not solved**: the dominant defect (distance ≡ severity) is fixed and
 measured; absolute calibration is still open.
 
+=======
+>>>>>>> origin/feat/ai-phase2
 ## What would actually move the number
 
 In rough order of expected payoff:
