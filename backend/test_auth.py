@@ -53,6 +53,65 @@ def test_auth_register_and_login():
         assert "access_token" not in client.cookies
 
 
+def test_login_rate_limiting():
+    """B3-9: repeated failed logins are throttled with 429, and a success resets it."""
+    import rate_limit
+    import main
+    from database import SessionLocal
+    import models
+
+    # The limiter's counter lives in Redis (or an in-process dict). Both persist
+    # across test runs, so this test must own its starting state: clear the key with
+    # the *same* client the endpoint uses before and after.
+    rl_key = "testclient:ratelimit_user"
+    rate_limit.reset(rl_key, main.redis_client)
+
+    # Seed a user whose correct password we know.
+    db = SessionLocal()
+    if (
+        not db.query(models.User)
+        .filter(models.User.username == "ratelimit_user")
+        .first()
+    ):
+        db.add(
+            models.User(
+                username="ratelimit_user",
+                hashed_password=auth.hash_password("correct-horse"),
+                role="fleet",
+            )
+        )
+        db.commit()
+    db.close()
+
+    with TestClient(app) as client:
+        bad = {"username": "ratelimit_user", "password": "wrong"}
+
+        # First MAX_ATTEMPTS bad logins are rejected as 401 (bad credentials).
+        for _ in range(rate_limit.MAX_ATTEMPTS):
+            res = client.post("/auth/login", json=bad)
+            assert res.status_code == 401
+
+        # The next attempt is blocked by the limiter, even with a wrong password.
+        res = client.post("/auth/login", json=bad)
+        assert res.status_code == 429
+        assert "Retry-After" in res.headers
+
+        # Even the CORRECT password is blocked while the window is open.
+        good = {"username": "ratelimit_user", "password": "correct-horse"}
+        res = client.post("/auth/login", json=good)
+        assert res.status_code == 429
+
+    # A different username from the same client is unaffected (per-account keying).
+    with TestClient(app) as client:
+        res = client.post(
+            "/auth/login", json={"username": "does-not-exist", "password": "x"}
+        )
+        assert res.status_code == 401
+
+    # Reset for isolation from any later test reusing this client IP.
+    rate_limit.reset(rl_key, main.redis_client)
+
+
 def test_role_restrictions():
     from database import SessionLocal
     import models
@@ -87,7 +146,7 @@ def test_role_restrictions():
         assert res.status_code == 403
 
         # Call repair (forbidden for fleet)
-        repair_payload = {"issue_id": "some-id", "status": "verified"}
+        repair_payload = {"issue_id": "some-id", "status": "approved"}
         res = client.post("/repair", json=repair_payload)
         assert res.status_code == 403
 

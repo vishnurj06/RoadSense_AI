@@ -16,6 +16,11 @@ python-jose[cryptography]>=3.3.0
 boto3>=1.28.0
 redis>=5.0.0
 psutil>=5.9.0
+# B3-9 privacy blur (code item #5). Haar cascades ship with opencv — no separate
+# weight files (avoids the gitignored-weights problem). headless = no GUI libs.
+# Pinned <5.0: OpenCV 5.x's headless wheel no longer bundles the Haar cascade XMLs.
+opencv-python-headless>=4.10,<5.0
+numpy>=1.24.0
 
 
 

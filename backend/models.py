@@ -22,7 +22,7 @@ class Issue(Base):
     class_name = Column(String(50), nullable=False)  # 'pothole', 'crack' etc.
     status = Column(
         String(50), nullable=False, default="detected", index=True
-    )  # 'detected', 'verified' etc.
+    )  # workflow: 'detected', 'approved', 'assigned', 'inspection', 'repair', 'completed', 'closed'
     severity = Column(
         String(20), nullable=False, default="low"
     )  # 'low', 'medium', 'high'
@@ -31,6 +31,9 @@ class Issue(Base):
     longitude = Column(Float, nullable=False)
     geom = Column(Geometry(geometry_type="POINT", srid=4326), nullable=False)
     detection_count = Column(Integer, nullable=False, default=1)
+    # code item #1: True once >=2 DISTINCT vehicles have reported this issue.
+    # 'detection_count' counts reports; this counts corroborating *vehicles*.
+    is_verified = Column(Boolean, nullable=False, default=False, server_default="false")
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
     updated_at = Column(
         DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow
@@ -40,6 +43,31 @@ class Issue(Base):
     audit_logs = relationship(
         "IssueAuditLog", back_populates="issue", cascade="all, delete-orphan"
     )
+
+    @property
+    def priority(self) -> int:
+        """Urgency score 0-100 (code item #3): higher = fix sooner.
+
+        Distinct from severity ("how bad") — this is "how urgent", the number an
+        authority actually triages on. Combines severity, corroboration (sighting
+        count + >=2-vehicle verification), and age escalation. Resolved work is not
+        urgent, so completed/closed score 0.
+
+        NOTE: traffic density / road importance are NOT yet available (would raise
+        a busy-road pothole above a quiet one). Fold them in when that data exists.
+        """
+        if self.status in ("completed", "closed"):
+            return 0
+        severity_weight = {"high": 50, "medium": 30, "low": 10}.get(self.severity, 10)
+        sightings = min(25, (self.detection_count or 1) * 5)
+        verified_boost = 15 if self.is_verified else 0
+        age_days = 0
+        if self.updated_at:
+            age_days = max(0, (datetime.utcnow() - self.updated_at).days)
+        age_boost = min(10, age_days)
+        return max(
+            0, min(100, severity_weight + sightings + verified_boost + age_boost)
+        )
 
 
 class Report(Base):

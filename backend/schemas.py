@@ -118,6 +118,8 @@ class IssueResponse(BaseModel):
     latitude: float
     longitude: float
     detection_count: int
+    is_verified: bool
+    priority: int
     created_at: datetime
     updated_at: datetime
 

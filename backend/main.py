@@ -1,7 +1,7 @@
 import os
 import sys
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 import httpx
 import math
@@ -14,6 +14,7 @@ from fastapi import (
     UploadFile,
     status,
     Form,
+    Request,
     Response,
     BackgroundTasks,
 )
@@ -31,6 +32,8 @@ import s3_storage
 from routers import fleet, notifications, admin, analytics
 import notification_service
 import model_registry
+import rate_limit
+import privacy
 from enrichment import enrich_report
 
 INFERENCE_URL = os.getenv("INFERENCE_URL", "http://localhost:8001")
@@ -178,6 +181,22 @@ def cluster_report_to_issue(
         matching_issue.detection_count += 1
         matching_issue.updated_at = datetime.utcnow()
 
+        # code item #1 — verification threshold: an Issue becomes "verified" only
+        # once >=2 DISTINCT vehicles have reported it (detection_count counts
+        # reports, which one circling vehicle could inflate on its own). Only
+        # non-empty vehicle_ids count, so anonymous/demo uploads never self-verify.
+        seen_vehicles = {
+            v
+            for (v,) in db.query(models.Report.vehicle_id)
+            .filter(models.Report.issue_id == matching_issue.id)
+            .distinct()
+            if v
+        }
+        if report.vehicle_id:
+            seen_vehicles.add(report.vehicle_id)
+        if len(seen_vehicles) >= 2:
+            matching_issue.is_verified = True
+
         # Update severity to maximum
         severity_priority = {"low": 1, "medium": 2, "high": 3}
         current_priority = severity_priority.get(matching_issue.severity, 0)
@@ -245,6 +264,7 @@ def cluster_report_to_issue(
             longitude=report.longitude,
             geom=f"POINT({report.longitude} {report.latitude})",
             detection_count=1,
+            is_verified=False,  # a single vehicle's first sighting is unverified
             created_at=report.timestamp,
             updated_at=report.timestamp,
         )
@@ -332,18 +352,41 @@ def register_user(payload: schemas.UserRegister, db: Session = Depends(get_db)):
 
 @app.post("/auth/login")
 def login_user(
-    payload: schemas.UserLogin, response: Response, db: Session = Depends(get_db)
+    payload: schemas.UserLogin,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
 ):
+    # B3-9: throttle brute-force. Key per-source-IP + username so a single account
+    # under attack is limited without locking out a whole shared IP.
+    client_ip = request.client.host if request.client else "unknown"
+    rl_key = f"{client_ip}:{payload.username}"
+
+    if rate_limit.is_rate_limited(rl_key, redis_client):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many failed login attempts. Please try again later.",
+            headers={
+                "Retry-After": str(
+                    rate_limit.retry_after_seconds(rl_key, redis_client)
+                    or rate_limit.WINDOW_SECONDS
+                )
+            },
+        )
+
     user = (
         db.query(models.User).filter(models.User.username == payload.username).first()
     )
     if not user or not auth.verify_password(payload.password, user.hashed_password):
+        rate_limit.record_failure(rl_key, redis_client)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password.",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    # Successful auth clears the counter for this key.
+    rate_limit.reset(rl_key, redis_client)
     token = auth.create_access_token(data={"sub": user.username})
 
     response.set_cookie(
@@ -425,6 +468,22 @@ def haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     return R * c
 
 
+def to_naive_utc(dt: datetime) -> datetime:
+    """Coerce *dt* to naive UTC — the storage convention across this schema.
+
+    Contract-v2 timestamps arrive tz-aware (e.g. '+05:30'), but the DateTime
+    columns are naive and the rest of the code compares against naive utcnow().
+    An aware value is converted to UTC then stripped; a naive value is assumed
+    already-UTC and returned unchanged. Without this, the teleportation guard
+    500s on the SECOND report from any vehicle (aware − naive subtraction), and
+    reports from different offsets would sit on different clocks — the exact
+    class of skew that disabled the guard in S5-13/§5f (see also G-15).
+    """
+    if dt.tzinfo is not None:
+        return dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
+
+
 def validate_gps_and_teleportation(
     db: Session, vehicle_id: str, lat: float, lon: float, timestamp: datetime
 ):
@@ -449,8 +508,14 @@ def validate_gps_and_teleportation(
         .first()
     )
     if last_report:
+        # Normalise both sides to naive UTC before subtracting (see to_naive_utc).
         time_diff_hours = (
-            abs((timestamp - last_report.timestamp).total_seconds()) / 3600.0
+            abs(
+                (
+                    to_naive_utc(timestamp) - to_naive_utc(last_report.timestamp)
+                ).total_seconds()
+            )
+            / 3600.0
         )
         if time_diff_hours > 0:
             distance_km = haversine(
@@ -496,7 +561,8 @@ def create_report(
     db_report = models.Report(
         id=report_id,
         vehicle_id=payload.vehicle_id,
-        timestamp=payload.timestamp,
+        # Store naive UTC so all reports share one clock (see to_naive_utc).
+        timestamp=to_naive_utc(payload.timestamp),
         latitude=payload.gps.lat,
         longitude=payload.gps.lon,
         geom=f"POINT({payload.gps.lon} {payload.gps.lat})",
@@ -625,6 +691,16 @@ async def detect_image(
     unique_filename = f"{uuid.uuid4()}_{file.filename}"
     try:
         contents = await file.read()
+        # code item #5: redact faces + plates BEFORE storage (after inference, which
+        # ran on the clear image). Gated by PRIVACY_BLUR (default off) so private
+        # testing is unaffected. Fail-closed — a blur error aborts the upload rather
+        # than persisting un-redacted PII.
+        if privacy.is_blur_enabled():
+            contents = privacy.blur_faces_and_plates(
+                contents,
+                content_type=file.content_type,
+                filename=file.filename,
+            )
         # Upload bytes directly to S3/MinIO
         s3_image_url = s3_storage.upload_image_bytes_to_s3(
             contents=contents,
@@ -826,6 +902,10 @@ def get_map_geojson(
                 "max_severity": issue.severity,
                 "image_url": issue.image_url,
                 "detection_count": issue.detection_count,
+                # code item #1: True once >=2 distinct vehicles corroborate.
+                "is_verified": issue.is_verified,
+                # code item #3: urgency score 0-100 (severity + sightings + age).
+                "priority": issue.priority,
                 "timestamp": issue.updated_at.isoformat(),
                 "vehicle_id": f"Clustered ({issue.detection_count} reports)",
                 "speed_kmph": latest_report.speed_kmph if latest_report else None,
@@ -982,11 +1062,14 @@ def update_user_role(
     return {"status": "success"}
 
 
-# Status transition rules
+# Status transition rules.
+# NB: the workflow "approved" state was renamed from "verified" (code item #2) to
+# stop it colliding with the *automatic* verification-by-sightings concept (#1).
+# Existing rows are migrated by Alembic revision e5c1a2f3b6d7.
 VALID_TRANSITIONS = {
-    "detected": {"verified", "closed"},
-    "verified": {"assigned", "closed"},
-    "assigned": {"inspection", "repair", "verified"},
+    "detected": {"approved", "closed"},
+    "approved": {"assigned", "closed"},
+    "assigned": {"inspection", "repair", "approved"},
     "inspection": {"repair", "assigned"},
     "repair": {"completed"},
     "completed": {"closed", "repair"},

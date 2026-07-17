@@ -244,3 +244,76 @@ def test_spatial_clustering(client):
         issue_properties["class_name"] == "pothole"
     )  # Highest confidence wins (0.95 pothole > 0.80 crack)
     assert issue_properties["max_severity"] == "high"  # Max of medium, high, low
+    # code item #1: four DISTINCT vehicles (car-1..car-4) → verified.
+    assert issue_properties["is_verified"] is True
+    # code item #3: high severity + 4 sightings + verified → a high urgency score.
+    # high(50) + min(25, 4*5)=20 + verified(15) + fresh age(0) = 85.
+    assert issue_properties["priority"] == 85
+
+
+def test_verification_threshold_needs_two_distinct_vehicles(client):
+    """code item #1: an Issue is verified only after >=2 DISTINCT vehicles report it.
+
+    Repeated sightings from the *same* vehicle raise detection_count but must NOT
+    verify — otherwise one circling car could self-confirm a phantom pothole.
+    """
+    from database import Base, engine, SessionLocal
+    import models
+    import auth
+
+    Base.metadata.drop_all(bind=engine)
+    Base.metadata.create_all(bind=engine)
+    db = SessionLocal()
+    db.add(
+        models.User(
+            username="test_admin",
+            hashed_password=auth.hash_password("password"),
+            role="admin",
+        )
+    )
+    db.commit()
+    db.close()
+
+    loc = {"lat": 12.9716, "lon": 77.5946}  # Bengaluru — far from the other tests
+
+    def post(report_id, vehicle_id, lat_offset=0.0):
+        return client.post(
+            "/detect",
+            json={
+                "report_id": report_id,
+                "vehicle_id": vehicle_id,
+                "timestamp": "2026-07-14T20:00:00+05:30",
+                "gps": {"lat": loc["lat"] + lat_offset, "lon": loc["lon"]},
+                "detections": [
+                    {
+                        "class": "pothole",
+                        "confidence": 0.9,
+                        "bbox": [0, 0, 10, 10],
+                        "severity": "medium",
+                    }
+                ],
+            },
+        )
+
+    def only_feature():
+        geojson = client.get("/map").json()
+        assert len(geojson["features"]) == 1
+        return geojson["features"][0]["properties"]
+
+    # 1. First sighting from car-alpha → unverified (one vehicle).
+    assert post("v-1", "car-alpha").status_code == 201
+    props = only_feature()
+    assert props["detection_count"] == 1
+    assert props["is_verified"] is False
+
+    # 2. SAME vehicle sees it again ~11 m away → clusters, count rises, still unverified.
+    assert post("v-2", "car-alpha", lat_offset=0.0001).status_code == 201
+    props = only_feature()
+    assert props["detection_count"] == 2
+    assert props["is_verified"] is False  # still one distinct vehicle
+
+    # 3. A DIFFERENT vehicle corroborates → now verified.
+    assert post("v-3", "car-beta", lat_offset=0.0001).status_code == 201
+    props = only_feature()
+    assert props["detection_count"] == 3
+    assert props["is_verified"] is True

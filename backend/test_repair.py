@@ -75,13 +75,13 @@ def test_repair_workflow(client):
     assert res.status_code == 400
     assert "Invalid transition" in res.json()["detail"]
 
-    # 3. Perform a valid transition: detected -> verified
-    repair_payload["status"] = "verified"
+    # 3. Perform a valid transition: detected -> approved
+    repair_payload["status"] = "approved"
     repair_payload["notes"] = "Verified pothole on camera footage."
     res = client.post("/repair", json=repair_payload)
     assert res.status_code == 200
     data = res.json()
-    assert data["status"] == "verified"
+    assert data["status"] == "approved"
 
     # Verify audit log exists
     res = client.get(f"/issues/{issue_id}/audit-log")
@@ -89,11 +89,11 @@ def test_repair_workflow(client):
     logs = res.json()
     assert len(logs) == 1
     assert logs[0]["old_status"] == "detected"
-    assert logs[0]["new_status"] == "verified"
+    assert logs[0]["new_status"] == "approved"
     assert logs[0]["notes"] == "Verified pothole on camera footage."
     assert logs[0]["changed_by"] == "authority_user"
 
-    # 4. Perform next valid transition: verified -> assigned
+    # 4. Perform next valid transition: approved -> assigned
     repair_payload["status"] = "assigned"
     repair_payload["notes"] = "Assigned to Ward A Road Repair crew."
     res = client.post("/repair", json=repair_payload)
