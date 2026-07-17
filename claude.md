@@ -2,7 +2,7 @@
 
 This file is the canonical progress tracker for the entire RoadSense AI project (Backend, Frontend,
 and AI Pipeline). Updated after every completed and verified task.
-Last updated: **2026-07-17** — **✅ SYNC POINT S5 VERIFIED** (manual UI confirmation by Person B) · merged Person A's `v4-all` + A3-7 registry · B3-4 done (`models.json` → DB bridge) · S5-13 fixed a **UTC bug that left the GPS teleportation guard inert on every non-UTC server** (§5f) · 🔴 **PRD 95% precision target falsified — needs renegotiation (D-4)**.
+Last updated: **2026-07-18** — **🏗️ POST-AUDIT BUILD STARTED (§10)** — PRD review complete (`docs/PRD_Review_and_Actions.md`), **7 product decisions locked** (`docs/PRD_Decisions_To_Make.md`), and an ordered code plan written (`docs/PRD_Implementation_Plan.md`). **Shipped so far: (1) B3-9 login rate-limiting** (`backend/rate_limit.py` + `/auth/login`) — 429 after 5 failed attempts/15 min, Redis-backed with in-process fallback; **(2) B3-2 notification bell UI** (`shell/NotificationBell.js`) — the built-but-unconsumed notifications backend now has a bell + unread badge + dropdown; **(3) code item #2 — workflow status `verified`→`approved`** (surgical rename, backend + frontend + Alembic data migration `e5c1a2f3b6d7`, GPS-provenance "verified" left untouched); **(4) code item #1 — verification threshold** (`Issue.is_verified` flips on ≥2 distinct vehicles; migration `f2a7b9c4d1e8`) — **and its test exposed + fixed a real bug: the teleportation guard 500'd on the 2nd tz-aware report from any vehicle** (`to_naive_utc`, partial G-15). **(5) code item #9 — verified-vs-pending UI** (map popup badge + green ✓ marker for ≥2-vehicle issues); **(6) code item #3 — priority score** (`Issue.priority` computed property, urgency 0-100 = severity + sightings + verified + age; exposed on `/map` + `IssueResponse`); **(7) code item #10 — repair queue sorted by priority** (⚡ indicator per row); **(8) code item #5 — privacy blur** (`privacy.py`, OpenCV Haar face+plate blur before S3, **gated off** via `PRIVACY_BLUR`; adds `opencv-python-headless<5.0`+`numpy` — CI/Docker must install). **99 tests** (34 backend + 65 frontend); alembic head `f2a7b9c4d1e8`. **8 of 9 code items done — only #6 frame sampling left (deferred: needs video upload, which doesn't exist yet).** Earlier today: **📋 PRD COMPLETION AUDIT (§9)** — tracker was stale on **B3-3 (Road Health Score DONE)** and **B3-9 (`SECRET_KEY` hardened)**; large **frontend restructure** (shell/views/ui) also landed. Previous: **2026-07-17** — ✅ SYNC POINT S5 VERIFIED · S5-13 fixed the UTC teleportation-guard bug (§5f) · 🔴 **PRD 95% precision target falsified — needs renegotiation (D-4)**.
 
 ## Project Metadata
 
@@ -173,14 +173,14 @@ Last updated: **2026-07-17** — **✅ SYNC POINT S5 VERIFIED** (manual UI confi
 |---|---|---|---|
 | **B3-0** | Close Phase-2 debt | ✅ Done | All sub-tasks complete. See breakdown below. |
 | **B3-1** | Fleet APIs (vehicles table, registry endpoints, camera health) | ✅ Done | See breakdown below. |
-| **B3-2** | Notifications (email digest, rate-limit, in-app bell) | ✅ Done | See breakdown below. |
-| **B3-3** | Road Health Score (formula, choropleth, normalisation) | ⬜ Planned | — |
+| **B3-2** | Notifications (email digest, rate-limit, in-app bell) | 🟡 **Backend done, UI missing** (§9 audit correction) | Backend fully done (see breakdown). But the **"in-app bell" has no frontend** — no bell icon, no notification center, no unread feed anywhere in `frontend/src`; only transient `Toast.js` popups exist. `GET /notifications` is unconsumed by the UI. Build the bell in Phase 4. |
+| **B3-3** | Road Health Score (formula, choropleth, normalisation) | ✅ **Done** (tracker was stale) | Backend `GET /analytics/road-health` (`routers/analytics.py:83`) — PostGIS `ST_HexagonGrid` scoring, severity weights (high=10/med=5/low=2) + age escalation + resolved-decay, coverage-normalised to 0–100. Frontend choropleth: `MapComponent.js` renders hex `<Polygon>`s (toggle `showRoadHealth` + legend), worst-segments panel in `AnalyticsView.js`, 4-bucket `healthColor`/`healthLabel` in `theme.js`. **Not yet load-tested** — see B3-7. |
 | **B3-4** | Model registry (`models` table, activate endpoint, Admin UI) | ✅ **Done** | DB registry + **`ai/models.json` → DB sync** (S5-12). Admin UI shows Person A's real `v3-merged`/`v4-all`. Pairs with A3-7. See §5e. |
-| **B3-5** | Data enrichment — `road_name` (Nominatim) + `weather` (OpenWeather) | 🟡 Mostly done | Backend enrichment live (`enrichment.py`). `road_name` now surfaced through `/map` → popup (S5-11, §5d). **Remaining:** `weather` is stored but rendered nowhere. |
+| **B3-5** | Data enrichment — `road_name` (Nominatim) + `weather` (OpenWeather) | 🟡 Mostly done | Backend enrichment live (`enrichment.py`). `road_name` surfaced through `/map` → popup (S5-11, §5d). **Remaining (confirmed by §9 audit):** `weather` is stored but rendered **nowhere** — zero `weather` references in `frontend/src`. Surface it or drop the column (Phase-4 §7). |
 | **B3-6** | GPS provenance — visually mark `faked` pins on map | ✅ Done | Marker + popup + filter all fail closed. Root-cause bug fixed 2026-07-17 (`/map` dropped `gps_source`). See §5c. |
 | **B3-7** | Performance validation (~10k reports, p95 for `/map` + `/analytics`) | ⬜ Planned | — |
 | **B3-8** | Frontend hardening (split `page.js`, add frontend tests, unknown-class safety) | ✅ Done | 35 tests passing. See breakdown below. |
-| **B3-9** | Security (encrypted uploads, GPS validation, `SECRET_KEY` rotation) | ⬜ Planned | — |
+| **B3-9** | Security (encrypted uploads, GPS validation, `SECRET_KEY` rotation, **login rate-limiting**) | 🟡 **Partial** (was "⬜ Planned" — understated) | **`SECRET_KEY` done**: `auth.py:14-25` reads it from env and **hard-fails (`ValueError`) if unset** — the only fallback is a test key under pytest. No dev default in prod. **Login rate-limiting DONE (§10, 2026-07-18)**: `backend/rate_limit.py` — `/auth/login` returns **429 after 5 failed attempts / 15 min**, keyed per `{ip}:{username}`, Redis `INCR`+`EXPIRE` with in-process-dict fallback (mirrors `notification_service`). Regression test `test_login_rate_limiting`. **GPS validation done**: `validate_gps_and_teleportation()` (bounds + Null Island + >300 km/h haversine), guard fixed in S5-13/G-14 — but still never exercised on a real non-UTC deployment. **Encrypted uploads PARTIAL**: `s3_storage.py:39` sets `ServerSideEncryption=AES256` **only when `ENVIRONMENT=production`**; dev/default uploads are unencrypted. Audit-logs + RBAC done. **Privacy blur DONE (§10 #5, gated off via `PRIVACY_BLUR`)** — OpenCV Haar face+plate blur before S3. Remaining: verify prod encryption end-to-end, re-audit the GPS guard in anger, validate blur on real faces + enable it for launch. |
 
 ### B3-0 Sub-task Breakdown
 
@@ -313,9 +313,9 @@ Last updated: **2026-07-17** — **✅ SYNC POINT S5 VERIFIED** (manual UI confi
 ## 4. Verification & Testing Status
 
 - **Sync Point S5:** ✅ **VERIFIED** (2026-07-17) — full Phase-3 dry-run against the live stack. Person B confirmed the B3-6 amber GPS warning renders correctly on a real web-UI upload through MinIO/PostGIS.
-- **Automated Tests:** **82 tests total** — 26 backend + 56 frontend.
-  - **Backend (26):** `backend/test_api.py`, `backend/test_detect_image.py`, `backend/test_stub.py`, `backend/test_repair.py`, `backend/test_auth.py`, **`backend/test_model_registry.py` (8)** — auth, state-machine, stub, upload, spatial clustering, **B3-6 GPS provenance + B3-5 `road_name` end-to-end**, **B3-4 `models.json` sync against the real registry file**, **UTC timestamp / teleportation-guard regression (§5f)**. All **PASSING**.
-  - **Frontend (56):** `src/__tests__/classUtils.test.js` (21), `gpsUtils.test.js` (13), `mapUtils.test.js` (8), `StatCards.test.jsx` (6), `Filters.test.jsx` (8) — Contract v3 forward-compatibility, GPS provenance fail-closed, GeoJSON→UI adapter field preservation, component rendering, null-safety. All **PASSING**.
+- **Automated Tests:** **99 tests total** — 34 backend + **65 frontend** (jest actual as of 2026-07-18).
+  - **Backend (34):** `test_api.py` (**+ verification-threshold #1**), `test_detect_image.py`, `test_stub.py`, `test_repair.py`, `test_auth.py` (**+ `test_login_rate_limiting`**), `test_model_registry.py` (8), **`test_privacy.py` (6 — #5 blur module + gate)** — auth, state-machine, stub, upload, spatial clustering, **≥2-vehicle verification threshold**, **priority score**, **login rate-limiting**, **privacy blur (fail-closed + /detect-image gate)**, **B3-6 GPS provenance + B3-5 `road_name`**, **B3-4 `models.json` sync**, **UTC/teleportation-guard regression (§5f)**. All **PASSING** (verified under `TZ=UTC`).
+  - **Frontend (65, 5 suites):** `src/__tests__/classUtils.test.js`, `gpsUtils.test.js`, `mapUtils.test.js` (**+ is_verified (#1) & priority (#3) adapter regressions**), `StatCards.test.jsx`, `Filters.test.jsx` — Contract v3 forward-compatibility, GPS provenance fail-closed, GeoJSON→UI adapter field preservation (incl. `is_verified`), component rendering, null-safety. All **PASSING**. **NotificationBell (#8) has no unit test yet** — shell components aren't covered by this suite.
 - **CI Status:** ✅ **Both jobs green** as of S5-13 (`8abbe91`, 2026-07-17). Every step run locally
   exactly as CI runs it **and in CI's timezone** (`TZ=UTC`): `backend-lint-and-test` (compileall ✅ →
   `ruff check backend/` ✅ → `ruff format --check backend/` ✅ 32 files → pytest ✅ **26 under TZ=UTC**)
@@ -738,8 +738,11 @@ across versions. **Person B cannot make this call alone — it needs the PRD own
 
 ## 7. Phase 4 (Deployment & Edge Cases) — Starting Position
 
-**Phase 3 platform status: feature-complete except B3-3 / B3-7 / B3-9.** Everything is committed and
-pushed (`8abbe91`), CI is green on every gate, 82 tests pass, and S5 is verified live.
+**Phase 3 platform status: feature-complete except B3-7, plus residual UI gaps.** (Updated by the §9
+audit: **B3-3 is done**, **B3-9 is partial not unbuilt**.) Everything is committed and pushed, CI is
+green on every gate, 82 tests pass, and S5 is verified live. **Remaining platform gaps:** B3-7
+(performance never measured), the B3-2 notification **bell UI** (backend done, no frontend), `weather`
+display (B3-5), and B3-9 loose ends (prod-only upload encryption, GPS guard never run in anger).
 
 ### Entry criteria — carried over, must land before/early in Phase 4
 
@@ -747,9 +750,9 @@ pushed (`8abbe91`), CI is green on every gate, 82 tests pass, and S5 is verified
 |---|---|---|---|
 | **D-4** | **PRD target renegotiation** (§6b) | **PRD owner** + A | Phase 4 cannot declare "done" against a target proven unreachable. |
 | **A3-5** | Field validation from a real vehicle | A | Largest untested risk. Every accuracy claim is out-of-domain until this exists. |
-| **B3-3** | Road Health Score | B | Last unbuilt Phase-3 platform feature. |
-| **B3-7** | Performance validation (~10k reports, p95 `/map` + `/analytics` < 2 s) | B | Indexes exist (`d7a1f0962038`) + `scripts/seed_10k_reports.py`; **never actually measured**. |
-| **B3-9** | Security — `SECRET_KEY` rotation, GPS validation, encrypted uploads | B | `SECRET_KEY` still has a dev default in `auth.py`. **Hard blocker for any public deployment.** ⚠️ **The GPS-validation half is less done than it looked**: the teleportation guard was *inert on every non-UTC server* until S5-13 (G-14) — it has therefore never actually run in anger. Re-audit it, don't assume it works. |
+| ~~**B3-3**~~ | ~~Road Health Score~~ | B | ✅ **Done** — built (backend hex-grid + frontend choropleth). Load-testing folds into B3-7. |
+| **B3-7** | Performance validation (~10k reports, p95 `/map` + `/analytics` **+ `/analytics/road-health`** < 2 s) | B | Indexes exist (`d7a1f0962038`) + `scripts/seed_10k_reports.py`; **never actually measured**. The road-health hex-grid query is heavy (per-hex correlated subqueries) — measure it too. |
+| **B3-9** | Security — `SECRET_KEY` rotation, GPS validation, encrypted uploads | B | ✅ `SECRET_KEY` **hard-fails without env var** — no dev default (the old claim here was wrong; `auth.py:14-25`). Remaining: upload encryption is **prod-only** (`ENVIRONMENT=production`), dev unencrypted; ⚠️ the GPS teleportation guard was *inert on every non-UTC server* until S5-13 (G-14) and has **never run in anger** — re-audit, don't assume. |
 
 ### Phase 4 scope
 
@@ -788,3 +791,272 @@ These were the Phase-3 scope items as defined at kickoff:
 - Admin model-version registry (swap deployed model without redeploy)
 - Frontend refactor: split `page.js` into role-specific route components
 - Performance validation: `/map` p95 < 2 s at ~10k reports
+
+---
+
+## 9. PRD Completion Audit (2026-07-18)
+
+Full codebase-vs-PRD verification (two parallel Explore sweeps over `backend/`, `ai/`, `frontend/src`
++ direct reads). **No servers were spun up** — the one thing that can't be re-measured from code
+(model accuracy) is already documented (§H) and blocked on dashcam footage (A3-5).
+
+### Headline: platform ≈ 90%, AI ≈ 40%, overall ≈ 75%.
+
+The backend/frontend platform is essentially feature-complete. The **AI model is the gap**, and its
+accuracy targets are experimentally falsified (§6b / D-4).
+
+### Scorecard vs the PRD
+
+| PRD area | Status | Note |
+|---|---|---|
+| **7 APIs** (`/detect`,`/upload`,`/reports`,`/map`,`/analytics`,`/verify`,`/repair`) | ✅ 100% | All present + auth, fleet, notifications, admin registry, health |
+| **Verification engine** (PostGIS clustering) | ✅ | `ST_DWithin` 20 m + duplicate merging |
+| **Dashboards** (Authority/Fleet/Admin) | ✅ | Role-scoped view sets in one page, not 3 routes — all PRD sub-items present |
+| **Repair workflow + audit log** | ✅ | State machine + `IssueAuditLog` |
+| **Security** (JWT, roles, GPS validation, audit) | 🟡 ~80% | Encrypted uploads prod-only; see B3-9 |
+| **Data enrichment** (road name / weather) | 🟡 | `road_name` wired; `weather` stored, shown nowhere |
+| **Notifications** | 🟡 | Backend done; **no in-app bell UI** |
+| **Road Health Score** *(PRD "future")* | ✅ | Already built (backend + choropleth) |
+| **Detection classes** (7 required) | 🔴 **2/7** | Model = `pothole`+`crack`. UI *registry* knows 7; filter buttons show 2 |
+| **AI pipeline** (YOLO→segmentation→depth→severity) | 🔴 | YOLO ✅, severity ✅ (relative), GPS ✅ — **segmentation & depth NOT built** |
+| **Accuracy** (precision ≥95% / recall ≥90%) | 🔴 | Best real footage 109/122 (~89%), 0 FP. Falsified as reachable by scaling (D-4) |
+| **Latency <100 ms/frame** | ✅ | 93.7 ms — 6% margin, fragile |
+
+### Corrections this audit made to the tracker
+
+1. **B3-3 Road Health Score** was `⬜ Planned` — it is **built** end-to-end (`routers/analytics.py:83`
+   hex-grid + `MapComponent.js` choropleth + `AnalyticsView.js` worst-segments). **Fixed above.**
+2. **B3-9 `SECRET_KEY`** — §7 claimed "still has a dev default in `auth.py`." **False:** `auth.py:14-25`
+   hard-fails with `ValueError` if the env var is unset (test key only under pytest). **Fixed above.**
+3. **B3-2 notification bell** — was `✅ Done`; the **UI half does not exist** (only `Toast.js`).
+   Downgraded to 🟡. **Fixed above.**
+
+### New findings not previously tracked
+
+- **Large frontend restructure landed** beyond B3-8's original component split — now a full app shell:
+  `components/shell/` (Sidebar, PageHeader, ⌘K CommandPalette), `components/views/` (six swappable
+  views: Map/Queue/Reports/Analytics/Fleet/Admin), `components/ui/` (design-system primitives, Panel,
+  Gauge), `components/marketing/LiveNetwork.js` (animated login backdrop — **not** a landing page;
+  `/` redirects to `/login`), `lib/motion.js` + `lib/theme.js` (motion + design tokens). Uses
+  `motion/react`, `recharts ^3`, `react-leaflet 5`, `lucide-react`. Working tree is clean (committed).
+- **Class filter UI is hardcoded to 2 classes** (`Filters.js` `knownClasses` defaults to
+  `["pothole","road_crack"]`, not overridden in `page.js`) even though `classUtils.js` registers all 7.
+  Cheap win: pass the full list once the model emits more classes.
+- **Auth is cookie/session** (`credentials:"include"` + localStorage user), not client-side bearer-JWT
+  token handling — functionally fine, just not literally what "JWT" implies on the frontend.
+
+### What actually blocks "PRD done" (all AI/data, not platform)
+
+1. **D-4** — renegotiate the 95%/90% targets (proven unreachable by scaling).
+2. **A3-5** — validate from a moving vehicle; every accuracy number is out-of-domain (handheld footage).
+3. **5 missing detection classes** + **road segmentation** + **depth estimation**.
+
+---
+
+## 10. Post-Audit Build Log (2026-07-18 →)
+
+After the §9 audit, a full section-by-section PRD review was run with the user (Person B / PRD owner).
+Three deliverables live in `docs/` (with PDFs):
+
+- **`docs/PRD_Review_and_Actions.md`** — all 20 PRD sections: reality → insight → actions, + a 4-bucket
+  Master Action List (Decisions · PRD edits · Code · Tests).
+- **`docs/PRD_Decisions_To_Make.md`** — the product decisions only the owner can make.
+- **`docs/PRD_Implementation_Plan.md`** — the code items with concrete file/line anchors, ordered
+  quick-wins-first.
+
+> The PRD itself (`docs/RoadSense_AI_PRD.md`) was deliberately **left unedited** — the review docs are
+> the working layer; the PRD edits are queued, not yet applied.
+
+### 7 product decisions — LOCKED (2026-07-18)
+
+| # | Decision | Call |
+|---|---|---|
+| 1 | Cloud vs edge | **Cloud now, edge later** |
+| 2 | Class scope | **4 classes + water flag** (pothole, crack, broken road, edge damage; drop speed breaker + patch repair) |
+| 3 | Weather field | **Keep, label "future use"** → weather UI items deferred |
+| 4 | #1 user | **Authority first** (⚠️ needs a data-seeding step so the map isn't empty) |
+| 5 | Real dashcam footage | **Yes — commit** (highest-value action; unblocks D-4 + A3-5) |
+| 6 | Privacy (blur faces/plates) | **Commit, build before launch** (not blocking private testing) |
+| 7 | Accuracy target | **Measure first, then commit** — the footage drive sets the number (this is how D-4 resolves) |
+
+### Code items — plan vs done
+
+Plan = 11 code items (7 backend + 4 frontend). Decision 3 defers the 2 weather items → **9 active**.
+Build order: quick wins first.
+
+| # | Item | Layer | Status |
+|---|---|---|---|
+| 4 | **Login rate-limiting** | Backend | ✅ **DONE** — see below |
+| 8 | **Notification bell UI** | Frontend | ✅ **DONE** — see below |
+| 2 | **Rename workflow "verified" → "approved"** | Both | ✅ **DONE** — see below |
+| 1 | **Verification threshold (≥2 vehicles)** | Backend | ✅ **DONE** — see below |
+| 9 | **Show verified vs pending** | Frontend | ✅ **DONE** — see below |
+| 3 | **Priority score** | Backend | ✅ **DONE** — see below |
+| 10 | **Sort queue by priority** | Frontend | ✅ **DONE** — see below |
+| 5 | **Privacy blur (faces/plates)** | Backend | ✅ **DONE** (built now, gated off) — see below |
+| 6 | Frame sampling | Backend | ⬜ deferred — only if video upload added |
+| 7 / 11 | Weather (map + display) | Both | ⏸️ deferred (Decision 3) |
+
+### ✅ #4 — Login rate-limiting (DONE)
+
+- **`backend/rate_limit.py` (new)** — per-key failed-attempt limiter. Redis `INCR` + `EXPIRE` window is
+  the source of truth; degrades to an in-process dict when Redis is `None` (mirrors
+  `notification_service`'s pattern). Config: `LOGIN_MAX_ATTEMPTS=5`, `LOGIN_WINDOW_SECONDS=900`.
+- **`backend/main.py` `/auth/login`** — added `request: Request`; key = `{client_ip}:{username}` (limits
+  a targeted account without locking a shared IP). Returns **429 + `Retry-After`** once the window is
+  hit; records a failure on bad password; **resets on success**.
+- **Test:** `test_login_rate_limiting` — 5×401 → 429, correct password also blocked during the window,
+  a different username unaffected. **Owns its counter state** (resets the key via the real
+  `main.redis_client` at both ends) — an early version passed `None` and left the Redis key dirty,
+  failing the *next* full-suite run (`assert 429 == 401`). Fixed. Ran twice under `TZ=UTC` to confirm.
+- **Gates:** compileall ✅ · `ruff check` ✅ · `ruff format --check` ✅ (33 files) · pytest ✅ **27** under `TZ=UTC`.
+
+> **Lesson reinforced (again):** a test that writes to a persistent store (Redis here) must reset that
+> store with the *same* client the app uses — not a `None` stand-in. Same class of bug as §5f's
+> `vehicle_id` pollution.
+
+### ✅ #8 — Notification bell UI (DONE)
+
+The notifications backend (`routers/notifications.py`) was fully built but **completely unconsumed** —
+alerts were computed and never shown. This is the missing UI.
+
+- **`frontend/src/components/shell/NotificationBell.js` (new)** — bell icon + unread-count badge +
+  dropdown feed. Fetches `GET /notifications?limit=20` on mount and **polls every 60 s**; badge from
+  `unread_count`. Click a row → `POST /notifications/{id}/read` (optimistic); "Mark all read" →
+  `POST /notifications/read-all`. Outside-click closes the dropdown. Uses `motion/react` + `lucide-react`
+  + the design tokens, matching the shell.
+- **`frontend/src/app/page.js`** — imported the bell and passed it to `PageHeader` via the existing
+  `actions` slot (`PageHeader.js:64`).
+- **await-first discipline:** the fetcher reaches `await fetch(...)` before any `setState`, so the mount
+  effect + interval never trip `react-hooks/set-state-in-effect` (the rule §5d fought). ESLint confirms.
+- **Gates:** `eslint src` ✅ exit 0 · `jest` ✅ **63** · `next build` ✅ (`/` still prerenders static — the
+  bell didn't break SSR).
+- ⚠️ **Not yet clicked in a live browser** against a running backend (same caveat as the Admin Sync
+  button, §5e). Automated gates pass; a manual click-through is the one remaining check. Also, no unit
+  test was added — the Jest suite doesn't cover shell components (it tests `classUtils`/`gpsUtils`/
+  `mapUtils`/`StatCards`/`Filters`); worth a fetch-mocked test later.
+
+### ✅ #2 — Rename workflow status "verified" → "approved" (DONE)
+
+The workflow status `verified` clashed with the *automatic* verification-by-sightings concept that #1
+introduces. Renamed to **`approved`** in lockstep across backend + frontend + tests + a data migration.
+
+- ⚠️ **The rename was surgical, NOT a blind find-replace.** "verified" appears in two unrelated
+  meanings: (a) the workflow status — renamed; (b) **GPS provenance** ("✓ GPS VERIFIED", "unverified
+  location", the fail-closed `gpsUtils` rule) — **left untouched**. A blanket replace would have broken
+  the B3-6 provenance work. Every occurrence was classified by grep before editing.
+- **Backend:** `main.py` `VALID_TRANSITIONS` (key + both value-sets), `models.py` status comment,
+  `test_repair.py`, `test_auth.py`.
+- **Data migration:** `migrations/versions/e5c1a2f3b6d7_...py` — updates `issues.status` **and**
+  `issue_audit_logs.old_status/new_status` (`verified`→`approved`), with a symmetric `downgrade`. Chains
+  onto `d7a1f0962038`; **alembic head is now `e5c1a2f3b6d7` (single head, verified).**
+- **Frontend:** `classUtils.js` `STATUS_ORDER`, `QueueView.js` + `MapView.js` (`NEXT_STATUS`,
+  `ACTION_LABEL` — the button label also changed "Verify"→"Approve"), `MapComponent.js`
+  `statusTransitionMap`, `Filters.js` dropdown option, `page.js` queue subtitle, + `Filters.test.jsx`
+  and `classUtils.test.js`. (Status badges render `{status}` under CSS `capitalize`, so "approved"
+  auto-displays "Approved" — no separate label map needed.)
+- **Gates:** backend — compileall ✅ · ruff check ✅ · ruff format ✅ (34) · pytest ✅ **27** (`TZ=UTC`) ·
+  alembic single head ✅. Frontend — eslint ✅ · jest ✅ **63** · next build ✅.
+- ⚠️ **Migration not yet run against the live DB** (`alembic upgrade head`) — tests use
+  `create_all`, not migrations, so the data migration is unexercised. Run it on the dev DB before relying
+  on it. Same "drive it for real" caveat.
+
+### ✅ #1 — Verification threshold (≥2 distinct vehicles) (DONE)
+
+An Issue was "created" from a single report and `detection_count` incremented **per report regardless
+of vehicle** — so "verified" meant nothing (one circling car could inflate it). Now an Issue is
+**`is_verified=True` only once ≥2 DISTINCT vehicles have reported it.**
+
+- **`models.py`** — new `Issue.is_verified` (Boolean, `server_default false`). Migration
+  `f2a7b9c4d1e8_add_is_verified_to_issues.py` (chains onto `e5c1a2f3b6d7`; **alembic head is now
+  `f2a7b9c4d1e8`, single head**).
+- **`main.py` `cluster_report_to_issue`** — on attach, gathers **distinct non-empty `vehicle_id`s** among
+  the issue's reports (+ the current report) and sets `is_verified` when ≥2. New issues start `False`.
+  Only non-empty vehicle_ids count, so anonymous/demo-web-upload reports never self-verify.
+- **Exposed:** `/map` properties + `schemas.IssueResponse.is_verified`; **whitelisted in
+  `mapUtils.js`** (the 3-places rule — else it vanishes) + a `mapUtils.test.js` regression.
+- **Tests:** `test_verification_threshold_needs_two_distinct_vehicles` — 1 vehicle (even repeated) stays
+  unverified, a 2nd distinct vehicle flips it; plus an assertion on the existing 4-vehicle cluster test.
+
+> 🔴 **This task's test exposed and fixed a real production bug (partial G-15 / §5f-class).**
+> `validate_gps_and_teleportation` did `aware_timestamp − naive_db_timestamp` → **`TypeError` 500 on the
+> SECOND report from ANY vehicle** whenever timestamps are tz-aware (the normal Contract-v2 `+05:30`
+> case). The existing clustering test never caught it because it used all-distinct vehicles (guard never
+> compares two same-vehicle reports). Fix: new `to_naive_utc()` helper — `/detect` now **stores** naive
+> UTC and the guard **normalises both operands** before subtracting. Reports from different offsets now
+> share one clock. `/detect-image` was already UTC (S5-13). **Still open in G-15:** the ~7 `datetime.utcnow()`
+> deprecations and tz-aware columns; this only fixed the `/detect` ingest path.
+
+### ✅ #9 — Show verified vs pending (DONE)
+
+Surfaces the `is_verified` field (#1) in the UI so authorities can tell a corroborated issue from a
+single unconfirmed sighting. Frontend-only — no backend, no migration.
+
+- **`MapComponent.js` popup** — a corroboration badge below the GPS-provenance block: green
+  "✓ VERIFIED — corroborated by ≥2 vehicles" vs neutral "⏳ UNVERIFIED — awaiting a second vehicle".
+  Explicitly **orthogonal to GPS provenance** (location trust vs sighting trust) — commented as such.
+- **`MapComponent.js` marker** — verified pins get a small green ✓ badge at the **top-left** corner
+  (`createMarkerIcon` gained an `isVerified` arg; render passes `report.is_verified`). Its own corner,
+  so it never collides with the count badge (top-right) or the faked-GPS ring. Uses `STATUS.good`.
+- **Gates:** eslint ✅ · jest ✅ **64** · next build ✅. No new unit test — map/shell components aren't
+  covered by the Jest suite; the `mapUtils` `is_verified` regression (#1) already guards the data hop.
+- ⚠️ Not clicked in a live browser (same standing caveat).
+
+### ✅ #3 — Priority score (DONE)
+
+Severity answers "how bad"; **priority answers "how urgent"** — the number an authority triages on
+(the Authority-first decision made this the core dashboard signal). Backend-only.
+
+- **`models.py` `Issue.priority`** — a **computed `@property`** (0-100), so it's the single source of
+  truth read by both `/map` (manual dict) and `IssueResponse` (Pydantic `from_attributes`). Formula:
+  severity (high 50 / med 30 / low 10) + sightings `min(25, count*5)` + verified `+15` + age escalation
+  `min(10, age_days)`; **completed/closed → 0** (resolved work isn't urgent).
+  ⚠️ **Traffic density / road importance are NOT in the formula** — that data doesn't exist yet; a
+  busy-road pothole can't yet outrank a quiet one. TODO documented on the property. (Matches the PRD
+  review's severity-vs-priority split.)
+- **Exposed:** `/map` properties + `schemas.IssueResponse.priority`; **whitelisted in `mapUtils.js`**
+  (+ whole-shape `toEqual` and a dedicated regression in `mapUtils.test.js`).
+- **Test:** `test_spatial_clustering` asserts the high-severity, 4-vehicle, verified cluster scores
+  exactly **85** (50+20+15+0).
+- **Gates:** backend ruff ✅ · pytest ✅ **28** (`TZ=UTC`). Frontend eslint ✅ · jest ✅ **65** · build ✅.
+- Pairs with **#10** (sort the queue by this) — done below.
+
+### ✅ #10 — Sort repair queue by priority (DONE)
+
+Completes the Authority-first triage pair with #3. Frontend-only.
+
+- **`views/QueueView.js`** — the `pending` useMemo now sorts by **`issue.priority` descending** (was
+  severity-only), with severity as the tiebreak. A missing priority sinks to the bottom (`?? -1`) rather
+  than jumping the queue. Each row shows a compact **⚡{priority}** indicator so the ordering is legible
+  (otherwise the reorder looks arbitrary). Doc comment updated: the queue answers "what needs someone
+  next" = urgency, not severity/chronology.
+- **Gates:** eslint ✅ · jest ✅ **65** · next build ✅. (QueueView isn't covered by the Jest suite; the
+  `priority` data hop is guarded by the `mapUtils` regression from #3.)
+- ⚠️ Not clicked in a live browser (standing caveat).
+
+### ✅ #5 — Privacy blur (faces + plates) (DONE — built now, gated off per Decision 6)
+
+Street imagery captures faces + plates = personal data (DPDP/GDPR). Now redacted **before** storage.
+
+- **`backend/privacy.py` (new)** — `blur_faces_and_plates(bytes, content_type, filename)`:
+  cv2 decode → **OpenCV Haar cascades** (face + plate) → `GaussianBlur` each region → re-encode
+  (format preserved: png/webp/jpg). **Fail-closed** — raises on any error so the caller never stores
+  un-redacted PII. `is_blur_enabled()` reads `PRIVACY_BLUR` **live** (default `0`).
+- **Why Haar:** cascades **ship bundled with opencv** → no separate weight files (sidesteps the
+  gitignored-weights problem the YOLO model has). ⚠️ **BASIC best-effort** — frontal faces + a
+  region-specific plate cascade; NOT production-grade anonymisation. Upgrade path = a DNN detector.
+  Documented on the module.
+- **`main.py` `/detect-image`** — after inference (runs on the CLEAR image), before S3 upload:
+  `if privacy.is_blur_enabled(): contents = privacy.blur_faces_and_plates(contents, ...)`. Default off,
+  so current testing is unaffected; flip `PRIVACY_BLUR=1` before any public launch.
+- **Deps:** `requirements.txt` — `opencv-python-headless>=4.10,<5.0` + `numpy`. **Pinned `<5.0`:**
+  OpenCV 5.x's headless wheel **stopped bundling the Haar XMLs** (hit this live — 5.0 installed but
+  `cv2.data.haarcascades` was empty; 4.13 has all 17). ⚠️ **CI/Docker must `pip install` these** — first
+  non-pure-Python backend addition; opencv is a chunky wheel.
+- **Tests:** `test_privacy.py` (6) — module (env gate, real decode→blur→encode round-trip preserving
+  dimensions + png format, **fail-closed on garbage bytes**) + integration (blurred bytes reach S3 when
+  enabled; blur skipped when disabled). Distinct `vehicle_id`s to avoid the §5f teleport-pollution trap.
+- **Gates:** compileall ✅ · ruff ✅ · pytest ✅ **34** (`TZ=UTC`).
+- ⚠️ **Not validated on a real face/plate image** — tests prove the *pipeline* runs and the *gate*
+  works, not Haar's detection accuracy (which is known-mediocre). Validate on real footage before
+  trusting it as a compliance control. Also un-exercised end-to-end with `PRIVACY_BLUR=1` against live S3.
