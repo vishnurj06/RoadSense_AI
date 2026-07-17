@@ -4,12 +4,17 @@ Every training run gets a row. **All metrics below are on the `valid` split (118
 rows are comparable to each other. Test-split numbers are called out separately — never compare a
 test number against a val number.
 
-| run | base | epochs | imgsz | device | classes | mAP50 | notes |
-|---|---|---|---|---|---|---|---|
-| `train-2` (baseline) | yolov8n | 12 | 416 | CPU | pothole | 0.556 | val split |
-| `v2-2` | yolov8s | 48/100 | 640 | T4 | pothole | 0.550 | val; did **not** beat baseline |
-| `v3-rdd-india` (rejected) | yolov8s | 85/100 | 640 | T4 | pothole+crack | 0.427 | pothole AP 0.377 — regressed on real footage |
-| `v3-merged` (**current `best.pt`**) | yolov8s | ~60/100 | 640 | T4 | pothole+crack | 0.480 | pothole AP **0.460**, crack AP **0.499** |
+| run | base | epochs | imgsz | device | classes | train imgs | mAP50 | notes |
+|---|---|---|---|---|---|---|---|---|
+| `train-2` (baseline) | yolov8n | 12 | 416 | CPU | pothole | 1,230 | 0.556 | val split |
+| `v2-2` | yolov8s | 48/100 | 640 | T4 | pothole | 1,230 | 0.550 | val; **config changes did nothing** |
+| `v3-rdd-india` (rejected) | yolov8s | 85/100 | 640 | T4 | pothole+crack | ~5.4k | 0.427 | pothole AP 0.377 — collapsed to 18/55 on real footage |
+| `v3-merged` | yolov8s | ~60/100 | 640 | T4 | pothole+crack | 6,655 | 0.480 | pothole AP 0.460, crack AP 0.499 |
+| `v4-all` (**current `best.pt`**) | yolov8s | 60 | 640 | T4 | pothole+crack | 11,976 | 0.511 | pothole AP 0.477, crack AP **0.545**; TTA 0.519 |
+
+⚠️ **The mAP50 column is NOT comparable across the last two rows.** `v3-merged`'s test split is
+India+p3 (1,225 images); `v4-all`'s is all-countries+p3 (5,817). Judge them by the real-footage
+head-to-head below, not by this column.
 
 **Current deployment: `v3-merged`.** `MODEL_VERSION=roadsense-yolov8s-v3-merged`, `CONF_THRESHOLD=0.29`
 (F1-optimal, 0.52 at 0.292). Old `v2-2` kept at `weights/best-yolov8s-v2-2.pt`.
@@ -149,6 +154,52 @@ independently confirmed cracks on non-RDD footage — there are no crack test im
 dashboard `crack` filter now *can* match, but expect it to fire only on clear RDD-style cracks until
 we test it on real crack footage. That test is the open item for cracks.
 
+## `Pothole_new_india_360p.mp4` — third positive set, and the best result yet
+
+640x360 landscape, 40 s, 25 fps → 67 frames in `ai/india_frames/`. An Indian road covered in large
+potholes, **many of them water-filled**. v3-merged at the deployed `conf=0.29`:
+
+| footage | frames hit | max conf |
+|---|---|---|
+| `potholevideos.mp4` | 45 / 55 (82%) | 0.755 |
+| **`Pothole_new_india_360p.mp4`** | **61 / 67 (91%)** | **0.882** |
+
+Even at `conf=0.50` it still hits 54/67. **This is the model's strongest showing on any real footage**,
+and it is a genuinely independent third test set.
+
+### The interesting part: water-filled potholes work
+
+The boxes land on the flooded potholes. That was not a given — a water-filled pothole is bright and
+reflective, the visual *opposite* of the dark holes the training data is full of. The model was never
+trained on them as a class and still finds them, labelling them `pothole` (which is defensible: they
+*are* potholes).
+
+**This matters for A3-1.** `water_filled_pothole` is one of the 7 PRD classes, and the Phase-3 plan
+called it *"the hardest — likely needs custom collection"*. We now have footage of it, and evidence
+the detector already sees them. **But 67 frames from one scene is not a training set** — it is enough
+to evaluate, not to teach a new class.
+
+Recall is still visibly imperfect: several potholes per frame go unboxed (e.g. the dark one top-left
+of `frame_0000`), consistent with the measured recall of ~0.44.
+
+### ⚠ It does NOT close the dashcam gap — the geometry says so
+
+It *looks* more dashcam-like (landscape, forward motion) but it is the **same low, road-filling
+camera** as the handheld clip. Vertical position of detections:
+
+| footage | min | median | max |
+|---|---|---|---|
+| `Pothole_new_india_360p.mp4` | 0.06 | **0.39** | 0.92 |
+| `potholevideos.mp4` | 0.07 | **0.41** | 0.91 |
+
+A windshield-mounted dashcam would put the horizon mid-frame and cluster potholes **low** (~0.6-0.9).
+These two are statistically the same camera height. So this is a **second sample of the same domain**,
+not a new one.
+
+**Still open, unchanged:** no GPS (so A3-5's GPS validation is untouched), and no true
+vehicle-mounted footage. **Every accuracy claim we have still comes from low, close-range video.**
+Recording a real drive remains the cheapest way to close that.
+
 ## Comparison with the Phase-1 Roboflow hosted API
 
 The 57 committed JSONs in `ai/outputs/` (produced in Phase 1 via `detect.roboflow.com`) contain
@@ -168,6 +219,51 @@ The baseline is kept at `weights/best-yolov8n-v1.pt` so the comparison above sta
 `0.30` is a **dataset-derived** threshold, not a field-validated one. It is the right default and it
 is honestly sourced — but as the table above shows, it does not stop false positives on footage that
 looks nothing like the training set.
+
+## 🔬 `v4-all` — the data-scale experiment. **Answer: data scale is not the lever either.**
+
+**The single most important result in this file.** Every prior run trained on a subset; `v4-all`
+tested the one untried hypothesis — **more data**.
+
+**Setup:** all 6 RDD countries (India 5,368 · Japan 7,432 · Norway 5,708 · US 3,348 · China 3,051 ·
+Czech 1,962 = 26,869) + pothole-detection-3 + 57 hard negatives. Non-pothole images subsampled 1-in-3
+so cracks could not swamp potholes (34,114 → 13,443 crack boxes; **every** pothole kept: 8,750).
+Final: **11,976 train images — 4x v3's data**, same yolov8s @640 so only the data changed.
+
+### The result: marginal and mixed
+
+Real footage @ conf 0.29 — the ship gate:
+
+| test set | v3-merged | **v4-all** | |
+|---|---|---|---|
+| `potholevideos.mp4` | 45/55 | **51/55** | ✅ v4 better at **every** threshold (+3 to +7) |
+| `Pothole_new_india_360p.mp4` | **60/67** | 58/67 | ❌ v4 worse; less confident (max 0.855 vs 0.882) |
+| hard negatives | 0 FP | **0 FP** | tie |
+| **total frames hit** | 105/122 | **109/122** | |
+| **total detections** | 178 | **204 (+15%)** | |
+
+**Shipped** — net recall is up (the known weakness) with false positives still 0, and v4 saw 6
+countries vs 1, which should generalise better to the dashcam domain we cannot test. But it is an
+**honest marginal call, not a clean win**: it failed the stated gate ("beat v3 on all three").
+
+### What it actually proves — this is the finding, not the model
+
+**4x the data → a ~4-frame net change.** Not a breakthrough. Set that beside `v2-2`:
+
+| hypothesis | experiment | result |
+|---|---|---|
+| "it's under-trained" (epochs / model size / resolution) | `v2-2` | **falsified** — 0.556 → 0.550 |
+| "it needs more data" | `v4-all` | **falsified as a step-change** — 4x data, marginal real-world gain |
+
+**Two independent experiments now point at the same conclusion: the ceiling is LABEL QUALITY, not
+data quantity and not training config.** RDD's labels are inconsistent — the same damage is boxed
+differently across countries, and plenty is missed entirely.
+
+**Consequence for the Phase-2/3 targets (D-4).** mAP50 ≥ 0.75 and the PRD's precision ≥95% /
+recall ≥90% are **not reachable by scaling this approach**. That is no longer an opinion — it is two
+falsified hypotheses. Anyone proposing "just train it longer / feed it more" should be shown this
+table. **The remaining levers are: better labels, a domain-matched dataset (real dashcam footage), or
+accepting a lower, honest target.**
 
 ## Note on `docs/codebase_audit_report.md` (2026-07-16) — stale on the AI track
 
@@ -261,6 +357,105 @@ buckets populate (28 / 26 / 27). The function signature is unchanged, so `model.
 
 So A-5 is **improved and honest, not solved**: the dominant defect (distance ≡ severity) is fixed and
 measured; absolute calibration is still open.
+
+## A3-6 — latency: the ONNX/OpenVINO plan was wrong, and we already pass
+
+**Two of my own claims were false. Both are corrected here.**
+
+### False claim 1: "103 ms/frame — currently failing"
+
+That came from a sloppy benchmark (8 runs, 1 warmup). Measured properly — **25 runs, 8 warmups,
+median, through `model.predict()` (the path `model.py` actually calls)**:
+
+    PyTorch (.pt):  93.7 ms   -> PASSES the PRD's <100 ms/frame
+
+**Hardware, because "<100 ms" is meaningless without it:** AMD Ryzen 5 5600H, 12 cores, torch using
+6 threads, CPU only, imgsz 640, one 474x854 image, warm.
+
+### False claim 2: "export ONNX/OpenVINO — typically 2-3x on CPU"
+
+Received wisdom. **Tested, and it is backwards on this hardware.** All three through the production
+path, **interleaved** round-robin so thermal drift hits each equally:
+
+| backend | median | vs PyTorch | <100 ms? |
+|---|---|---|---|
+| **PyTorch (.pt)** | **93.7 ms** | 1.00x | ✅ |
+| ONNX Runtime 1.27 | 132.3 ms | **1.41x SLOWER** | ❌ |
+| OpenVINO 2026.2 | 177.2 ms | **1.89x SLOWER** | ❌ |
+
+Both exports also **changed the output** (pothole conf 0.75 → 0.73). A faster wrong answer is not a
+win — and these were not even faster.
+
+**Why (best explanation):** torch 2.13's CPU backend is oneDNN-optimised and already strong on a
+modern Ryzen. OpenVINO is Intel-tuned and gives up much of its advantage on AMD. Neither export
+beats it here.
+
+**A methodological trap worth recording:** a raw forward-pass comparison says the *opposite* —
+ONNX 156 ms vs PyTorch 205 ms, i.e. ONNX "1.32x faster". That is wrong because `YOLO().model` is
+**unfused**, while exporting fuses conv+BN. Benchmarking the unfused module handicaps PyTorch and
+flips the conclusion. **Always measure the path you actually deploy.**
+
+**Decision: do NOT ship ONNX or OpenVINO.** No speedup, changed outputs, two extra dependencies.
+`ai/requirements.txt` is untouched; the export artifacts were deleted (regenerable in ~2 s).
+
+### What the latency picture actually is
+
+- ✅ **The PRD's <100 ms/frame is met today** — 93.7 ms, on the hardware named above.
+- ⚠️ **The margin is 6%.** This is one image, warm, with **no depth and no segmentation**.
+- ⚠️ **A3-3 (depth) and A3-4 (segmentation) each add a second model per frame and will blow it.**
+  The mitigation is already in the plan: run depth **only on frames that already have a detection**.
+  If that is not enough, the answer is a GPU / Jetson (the PRD lists both) — **not** an ONNX export.
+- ⚠️ **93.7 ms/frame ≈ 10 fps. It is NOT real-time for 30 fps dashcam video** — that would need
+  ~33 ms. The PRD asks for <100 ms and we meet *that*, but nobody should read it as "runs live on a
+  dashcam". Batch/sampled frames only.
+
+**Untested levers, if depth+segmentation do blow the budget:** INT8 quantisation (real speedup,
+costs accuracy, needs calibration data), a smaller imgsz (costs small-object recall — bad for
+potholes), `torch.compile`, or GPU/edge hardware.
+
+## A3-4 — road segmentation: measured, and NOT built. The problem is already solved.
+
+A3-4 exists to kill the treeline / dashboard-bezel false positives. **That problem no longer exists**,
+so the task has no upside and a large downside. Both sides measured on v3-merged:
+
+### Upside: zero — FP is already 0
+
+57 pothole-free dashcam frames (any detection = a false positive):
+
+| threshold | false positives |
+|---|---|
+| **0.29 (deployed)** | **0 / 57** |
+| 0.20 / 0.15 / 0.10 | **0 / 57** |
+| 0.05 | 2 — at conf **0.077** and **0.055** |
+
+The highest latent off-road detection is **conf 0.077 — 3.8x below the deployed 0.29.** A road mask
+would remove detections the confidence threshold already discards. **Nothing to gain.**
+
+**The 57 hard negatives already did segmentation's job, at zero latency cost.** v2-2 fired on the
+treeline at **0.395** and the dashboard at **0.341** — both *above* threshold. Adding those frames as
+background images in v3-merged drove it to 0. That is the cheaper fix, and it already shipped.
+
+### Downside: it would delete 38% of recall
+
+Where 81 true potholes actually sit vertically (`potholevideos.mp4`, conf 0.29):
+
+    min ycen 0.07 | median 0.41 | max 0.91
+    31 of 81 (38%) sit ABOVE ycen 0.35 — the same zone the false positives were in
+
+**A filter targeting the FP zone deletes 38% of real potholes.** Real potholes and the (already
+sub-threshold) false positives occupy the *same* part of the frame, so no naive geometric split
+separates them. A learned road mask might do better — but it would be spending a second model per
+frame, against a **6% latency margin** (see A3-6), to fix a **0-false-positive** problem.
+
+### Decision: not built. Revisit only when this is measured, not assumed.
+
+**Reopen A3-4 if and only if** FP > 0 at the deployed threshold on real footage. Right now the
+honest answer is that the ship gate (§A3-4: "FP stays 0 **and** recall is not regressed") is
+**unreachable** — FP is already 0, so segmentation can only hold or hurt.
+
+**One genuine future use, not FP filtering:** a road mask would let us *estimate the horizon
+automatically*, which would fix A-5's real limitation (`SEVERITY_HORIZON_Y` is currently hand-set per
+camera). If segmentation gets built, that — not false positives — is the reason.
 
 ## What would actually move the number
 
