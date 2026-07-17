@@ -168,7 +168,7 @@ export function getSeverityBadgeStyle(severity) {
 /** The repair lifecycle, in order. `detected` is index 0. */
 export const STATUS_ORDER = [
   "detected",
-  "verified",
+  "approved",
   "assigned",
   "inspection",
   "repair",

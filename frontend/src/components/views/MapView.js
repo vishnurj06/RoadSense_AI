@@ -8,8 +8,8 @@ import { SeverityBadge, Chip, EmptyState } from "@/components/ui/Primitives";
 import { getMaxSeverity, getClassLabel, getStatusBadgeStyle } from "@/lib/classUtils";
 import { stagger, rowIn, T } from "@/lib/motion";
 
-const NEXT_STATUS = { detected: "verified", verified: "repair", repair: "completed" };
-const ACTION_LABEL = { detected: "Verify", verified: "Dispatch", repair: "Complete" };
+const NEXT_STATUS = { detected: "approved", approved: "repair", repair: "completed" };
+const ACTION_LABEL = { detected: "Approve", approved: "Dispatch", repair: "Complete" };
 
 /**
  * MapView — the issue index for the canvas behind it.

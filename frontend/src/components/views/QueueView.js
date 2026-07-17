@@ -7,18 +7,19 @@ import { SeverityBadge, Chip, EmptyState } from "@/components/ui/Primitives";
 import { getMaxSeverity, getClassLabel, getStatusBadgeStyle, STATUS_ORDER } from "@/lib/classUtils";
 import { stagger, rowIn, T } from "@/lib/motion";
 
-const NEXT_STATUS = { detected: "verified", verified: "assigned", assigned: "repair", repair: "completed" };
-const ACTION_LABEL = { detected: "Verify", verified: "Dispatch", assigned: "Start repair", repair: "Complete" };
-const STAGES = ["detected", "verified", "assigned", "repair"];
+const NEXT_STATUS = { detected: "approved", approved: "assigned", assigned: "repair", repair: "completed" };
+const ACTION_LABEL = { detected: "Approve", approved: "Dispatch", assigned: "Start repair", repair: "Complete" };
+const STAGES = ["detected", "approved", "assigned", "repair"];
 
 /**
  * QueueView — the PRD's "Pending reports" + "Repair tracking", for Authority.
  *
  * This was buried as a card inside the map panel, which made the authority's
  * core job — triaging and dispatching — a thing you had to scroll past the
- * filters to reach. It is a destination now, and it is ordered by severity
- * first: the queue exists to answer "what needs someone next", and that is a
- * severity question, not a chronological one.
+ * filters to reach. It is a destination now, and it is ordered by PRIORITY
+ * (urgency = severity + corroboration + age, computed backend-side, code item
+ * #3) first: the queue answers "what needs someone next", which is an urgency
+ * question, not a severity or chronological one. Severity is only the tiebreak.
  */
 export default function QueueView({ issues, onQuickAction }) {
   const [stage, setStage] = useState("all");
@@ -28,7 +29,15 @@ export default function QueueView({ issues, onQuickAction }) {
     return (issues || [])
       .filter((i) => STAGES.includes((i.status || "detected").toLowerCase()))
       .filter((i) => stage === "all" || (i.status || "detected").toLowerCase() === stage)
-      .sort((a, b) => rank[getMaxSeverity(a.detections)] - rank[getMaxSeverity(b.detections)]);
+      .sort((a, b) => {
+        // Primary: backend priority (urgency), highest first. A missing score
+        // sinks to the bottom rather than jumping the queue (fail-safe).
+        const pa = a.priority ?? -1;
+        const pb = b.priority ?? -1;
+        if (pb !== pa) return pb - pa;
+        // Tiebreak: severity, high first.
+        return rank[getMaxSeverity(a.detections)] - rank[getMaxSeverity(b.detections)];
+      });
   }, [issues, stage]);
 
   const countFor = (s) =>
@@ -88,6 +97,14 @@ export default function QueueView({ issues, onQuickAction }) {
                       </span>
                       <SeverityBadge severity={getMaxSeverity(issue.detections)} />
                       <Chip className={`${getStatusBadgeStyle(issue.status)} capitalize`}>{status}</Chip>
+                      {issue.priority != null && (
+                        <span
+                          className="text-ink-3 tnum shrink-0 font-mono text-[9.5px]"
+                          title="Priority (urgency) — this is the sort order"
+                        >
+                          ⚡{issue.priority}
+                        </span>
+                      )}
                     </div>
                     {next && (
                       <motion.button

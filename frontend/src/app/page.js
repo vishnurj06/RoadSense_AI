@@ -30,6 +30,7 @@ import dynamic from "next/dynamic";
 import Sidebar from "@/components/shell/Sidebar";
 import PageHeader from "@/components/shell/PageHeader";
 import CommandPalette from "@/components/shell/CommandPalette";
+import NotificationBell from "@/components/shell/NotificationBell";
 import Toast from "@/components/shared/Toast";
 import MapView from "@/components/views/MapView";
 import QueueView from "@/components/views/QueueView";
@@ -89,7 +90,7 @@ const useIsHydrated = () =>
  */
 const VIEW = {
   map: { label: "Live Map", icon: MapIcon, title: "Live Hazard Map", subtitle: "Real-time detections across the network", w: 384 },
-  queue: { label: "Action Queue", icon: ListChecks, title: "Pending & Repair Tracking", subtitle: "Verified issues awaiting dispatch", w: 440 },
+  queue: { label: "Action Queue", icon: ListChecks, title: "Pending & Repair Tracking", subtitle: "Approved issues awaiting dispatch", w: 440 },
   reports: { label: "Report Logs", icon: Table2, title: "Report Logs", subtitle: "Raw telemetry from all vehicles", w: 1040 },
   analytics: { label: "Analytics", icon: BarChart3, title: "Operations Analytics", subtitle: "Trend, hazard mix & road health", w: 1100 },
   fleet: { label: "Fleet", icon: Car, title: "Fleet Registry", subtitle: "Vehicle status & camera health", w: 820 },
@@ -487,6 +488,7 @@ export default function Dashboard() {
             loading={loading}
             onRefresh={() => refresh()}
             onOpenPalette={() => setPaletteOpen(true)}
+            actions={<NotificationBell />}
           />
 
           {/*

@@ -18,6 +18,8 @@ const feature = (props = {}) => ({
     model_version: "roadsense-stub-v2",
     gps_source: "faked",
     road_name: "Fergusson College Road",
+    is_verified: true,
+    priority: 85,
     detections: [{ id: "d1", class: "pothole", severity: "high" }],
     ...props,
   },
@@ -43,6 +45,20 @@ describe("mapUtils — GeoJSON → UI adapter", () => {
     );
   });
 
+  it("carries is_verified through — #1 verification-threshold regression", () => {
+    expect(mapFeatureToIssue(feature()).is_verified).toBe(true);
+    const bare = feature();
+    delete bare.properties.is_verified;
+    expect(mapFeatureToIssue(bare).is_verified).toBeUndefined();
+  });
+
+  it("carries priority through — #3 regression", () => {
+    expect(mapFeatureToIssue(feature()).priority).toBe(85);
+    const bare = feature();
+    delete bare.properties.priority;
+    expect(mapFeatureToIssue(bare).priority).toBeUndefined();
+  });
+
   it("preserves every field the popup and filters read", () => {
     const issue = mapFeatureToIssue(feature());
     // If you add a property to GET /map, add it here — a field the adapter
@@ -61,6 +77,8 @@ describe("mapUtils — GeoJSON → UI adapter", () => {
       gps_source: "faked",
       road_name: "Fergusson College Road",
       status: "detected",
+      is_verified: true,
+      priority: 85,
     });
   });
 

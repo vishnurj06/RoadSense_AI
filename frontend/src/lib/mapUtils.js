@@ -37,6 +37,8 @@ export function mapFeatureToIssue(feature) {
     gps_source: props.gps_source, // B3-6 — provenance must survive the hop
     road_name: props.road_name, // B3-5 — enrichment must survive the hop
     status: props.status,
+    is_verified: props.is_verified, // #1 — ≥2-vehicle verification must survive the hop
+    priority: props.priority, // #3 — urgency score must survive the hop
   };
 }
 

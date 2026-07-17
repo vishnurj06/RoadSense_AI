@@ -148,7 +148,7 @@ export default function Filters({
         >
           <option value="all">All statuses</option>
           <option value="detected">Detected</option>
-          <option value="verified">Verified</option>
+          <option value="approved">Approved</option>
           <option value="assigned">Assigned</option>
           <option value="inspection">Inspection</option>
           <option value="repair">Repair</option>

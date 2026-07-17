@@ -78,8 +78,8 @@ describe("Filters", () => {
   test("calls setStatusFilter on dropdown change", () => {
     const { props } = renderFilters();
     fireEvent.change(screen.getByTestId("status-filter-select"), {
-      target: { value: "verified" },
+      target: { value: "approved" },
     });
-    expect(props.setStatusFilter).toHaveBeenCalledWith("verified");
+    expect(props.setStatusFilter).toHaveBeenCalledWith("approved");
   });
 });

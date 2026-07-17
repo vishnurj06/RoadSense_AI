@@ -189,7 +189,7 @@ describe("getStatusBadgeStyle", () => {
   // reserved for good→critical; a workflow state has no claim on them.
 
   test("in-flight states wear neutral ink, never a status hue", () => {
-    for (const s of ["detected", "verified", "assigned", "inspection", "repair"]) {
+    for (const s of ["detected", "approved", "assigned", "inspection", "repair"]) {
       expect(getStatusBadgeStyle(s)).not.toMatch(/critical|warning|good|serious/);
     }
   });
@@ -211,7 +211,7 @@ describe("getStatusProgress", () => {
   test("carries lifecycle ORDER so hue does not have to", () => {
     expect(getStatusProgress("detected")).toBe(0);
     expect(getStatusProgress("closed")).toBe(1);
-    expect(getStatusProgress("repair")).toBeGreaterThan(getStatusProgress("verified"));
+    expect(getStatusProgress("repair")).toBeGreaterThan(getStatusProgress("approved"));
   });
 
   test("unknown / null status is treated as the start, never NaN", () => {

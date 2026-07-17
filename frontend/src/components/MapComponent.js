@@ -13,7 +13,7 @@ import {
   STATUS_ORDER,
 } from "@/lib/classUtils";
 import { getGpsProvenance, getGpsSourceLabel } from "@/lib/gpsUtils";
-import { SEVERITY_COLOR, SURFACE, healthColor, healthLabel } from "@/lib/theme";
+import { SEVERITY_COLOR, SURFACE, STATUS, healthColor, healthLabel } from "@/lib/theme";
 
 // Default fallback icon, in case a divIcon ever fails to render.
 const DefaultIcon = L.icon({
@@ -39,7 +39,12 @@ L.Marker.prototype.options.icon = DefaultIcon;
  * amber ring + a ⚠ glyph + reduced opacity — so provenance survives being
  * printed, screenshotted, or read by someone with CVD.
  */
-const createMarkerIcon = (severity, detectionCount = 1, gpsSource = null) => {
+const createMarkerIcon = (
+  severity,
+  detectionCount = 1,
+  gpsSource = null,
+  isVerified = false,
+) => {
   const color = SEVERITY_COLOR[severity] || SEVERITY_COLOR.low;
   const isFaked = gpsSource === "faked";
   const isHigh = severity === "high";
@@ -68,6 +73,13 @@ const createMarkerIcon = (severity, detectionCount = 1, gpsSource = null) => {
          }</text>`
       : "";
 
+  // #9: verified pins (≥2 distinct vehicles) get a green ✓ badge at top-left —
+  // its own corner, so it never collides with the count badge or the faked ring.
+  const verifiedBadge = isVerified
+    ? `<circle cx="5" cy="6" r="5" fill="${SURFACE.surface}" stroke="${STATUS.good}" stroke-width="1.5"/>
+       <text x="5" y="8.6" font-size="7" font-family="sans-serif" font-weight="900" fill="${STATUS.good}" text-anchor="middle">&#x2713;</text>`
+    : "";
+
   // Teardrop pin, 28×38. The inner dot is punched out via fill-rule so the
   // map reads through it — a solid blob hides the road underneath.
   const svg = `
@@ -78,6 +90,7 @@ const createMarkerIcon = (severity, detectionCount = 1, gpsSource = null) => {
       ${fakedRing}
       ${fakedGlyph}
       ${badge}
+      ${verifiedBadge}
     </svg>`;
 
   return L.divIcon({
@@ -92,9 +105,9 @@ const createMarkerIcon = (severity, detectionCount = 1, gpsSource = null) => {
 const BACKEND_URL = "http://localhost:8000";
 
 const statusTransitionMap = {
-  detected: ["verified", "closed"],
-  verified: ["assigned", "closed"],
-  assigned: ["inspection", "repair", "verified"],
+  detected: ["approved", "closed"],
+  approved: ["assigned", "closed"],
+  assigned: ["inspection", "repair", "approved"],
   inspection: ["repair", "assigned"],
   repair: ["completed"],
   completed: ["closed", "repair"],
@@ -244,6 +257,22 @@ function IssuePopupContent({ report, onRefresh }) {
         <div className="text-ink-3 flex items-center gap-1.5 text-[9px] font-semibold">
           <span aria-hidden="true">?</span>
           GPS PROVENANCE UNKNOWN
+        </div>
+      )}
+
+      {/* Corroboration — #1/#9. An issue is "verified" only once >=2 DISTINCT
+          vehicles have reported it; a single source stays "unverified". This is
+          orthogonal to GPS provenance above (that's location trust; this is
+          sighting trust). */}
+      {report.is_verified ? (
+        <div className="text-good flex items-center gap-1.5 text-[9px] font-semibold">
+          <span aria-hidden="true">✓</span>
+          VERIFIED — corroborated by ≥2 vehicles
+        </div>
+      ) : (
+        <div className="text-ink-3 flex items-center gap-1.5 text-[9px] font-semibold">
+          <span aria-hidden="true">⏳</span>
+          UNVERIFIED — awaiting a second vehicle
         </div>
       )}
 
@@ -408,7 +437,8 @@ export default function MapComponent({
               icon={createMarkerIcon(
                 maxSeverity,
                 report.detections?.length || 1,
-                report.gps_source
+                report.gps_source,
+                report.is_verified
               )}
             >
               <Popup className="roadsense-popup" maxWidth={280} minWidth={248}>
