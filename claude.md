@@ -2,7 +2,7 @@
 
 This file is the canonical progress tracker for the entire RoadSense AI project (Backend, Frontend,
 and AI Pipeline). Updated after every completed and verified task.
-Last updated: **2026-07-17** — **✅ SYNC POINT S5 VERIFIED** (manual UI confirmation by Person B) · merged Person A's `v4-all` + A3-7 registry · B3-4 done (`models.json` → DB bridge) · 🔴 **PRD 95% precision target falsified — needs renegotiation (D-4)**.
+Last updated: **2026-07-17** — **✅ SYNC POINT S5 VERIFIED** (manual UI confirmation by Person B) · merged Person A's `v4-all` + A3-7 registry · B3-4 done (`models.json` → DB bridge) · S5-13 fixed a **UTC bug that left the GPS teleportation guard inert on every non-UTC server** (§5f) · 🔴 **PRD 95% precision target falsified — needs renegotiation (D-4)**.
 
 ## Project Metadata
 
@@ -313,13 +313,19 @@ Last updated: **2026-07-17** — **✅ SYNC POINT S5 VERIFIED** (manual UI confi
 ## 4. Verification & Testing Status
 
 - **Sync Point S5:** ✅ **VERIFIED** (2026-07-17) — full Phase-3 dry-run against the live stack. Person B confirmed the B3-6 amber GPS warning renders correctly on a real web-UI upload through MinIO/PostGIS.
-- **Automated Tests:** **81 tests total** — 25 backend + 56 frontend.
-  - **Backend (25):** `backend/test_api.py`, `backend/test_detect_image.py`, `backend/test_stub.py`, `backend/test_repair.py`, `backend/test_auth.py`, **`backend/test_model_registry.py` (8)** — auth, state-machine, stub, upload, spatial clustering, **B3-6 GPS provenance + B3-5 `road_name` end-to-end**, **B3-4 `models.json` sync against the real registry file**. All **PASSING**.
+- **Automated Tests:** **82 tests total** — 26 backend + 56 frontend.
+  - **Backend (26):** `backend/test_api.py`, `backend/test_detect_image.py`, `backend/test_stub.py`, `backend/test_repair.py`, `backend/test_auth.py`, **`backend/test_model_registry.py` (8)** — auth, state-machine, stub, upload, spatial clustering, **B3-6 GPS provenance + B3-5 `road_name` end-to-end**, **B3-4 `models.json` sync against the real registry file**, **UTC timestamp / teleportation-guard regression (§5f)**. All **PASSING**.
   - **Frontend (56):** `src/__tests__/classUtils.test.js` (21), `gpsUtils.test.js` (13), `mapUtils.test.js` (8), `StatCards.test.jsx` (6), `Filters.test.jsx` (8) — Contract v3 forward-compatibility, GPS provenance fail-closed, GeoJSON→UI adapter field preservation, component rendering, null-safety. All **PASSING**.
-- **CI Status:** ✅ **Both jobs green** as of S5-12 (2026-07-17), each step run locally exactly as CI
-  runs it: `backend-lint-and-test` (compileall ✅ → `ruff check backend/` ✅ → **`ruff format --check
-  backend/` ✅ 32 files** → pytest ✅ 25) and `frontend-lint-build` (ESLint ✅ exit 0 → Jest ✅ 56 →
-  `next build` ✅). See §5e — note §5d's earlier "green" claim had missed the format step.
+- **CI Status:** ✅ **Both jobs green** as of S5-13 (`8abbe91`, 2026-07-17). Every step run locally
+  exactly as CI runs it **and in CI's timezone** (`TZ=UTC`): `backend-lint-and-test` (compileall ✅ →
+  `ruff check backend/` ✅ → `ruff format --check backend/` ✅ 32 files → pytest ✅ **26 under TZ=UTC**)
+  and `frontend-lint-build` (ESLint ✅ exit 0 → Jest ✅ 56 → `next build` ✅).
+- **⚠️ How to verify CI locally — this bit us twice.** A local pass is *not* evidence about CI:
+  1. §5d claimed green having run only `ruff check`, missing the separate `ruff format --check` step.
+  2. §5e claimed green from a **UTC+5:30** box; CI runs **UTC** and went red on a timezone-dependent bug (§5f).
+
+  Run **every** gate, **in CI's environment**: `cd backend && TZ=UTC python -m pytest -q` (TZ works via
+  the Bash tool, not PowerShell). **Verify the gate you claim, in the environment that claims it.**
 
 - **AI model validation:** `potholevideos.mp4` — 43/55 frames detected at conf=0.30. Boxes correctly
   placed on real potholes. `dashcam.mp4` (Oregon highway, no potholes) — 3/57 frames fire (all false
@@ -344,6 +350,8 @@ Last updated: **2026-07-17** — **✅ SYNC POINT S5 VERIFIED** (manual UI confi
 | ~~G-10~~ | ~~`POST /detect-image` defined twice — **CI was red** (`ruff F811`)~~ | ✅ Fixed `780057d` | Person B (verify) | Merge artifact from `3a3aa52`. Kept the handler at 441 (S3 + PostGIS clustering + cache invalidation); removed 711 (older B-1 with none of those). It was already dead code — FastAPI matches the first route — so zero runtime change. **B: confirm this was your intended handler.** |
 | ~~G-11~~ | ~~Stale `feat/ai-phase2` branch is a landmine~~ | ✅ **Closed S5-12** | Both | **Actually closed now.** This row previously claimed "deleted by user" — the local branch (`ce9ef0c`) was still present as late as 2026-07-17. Verified merged into `main`, then deleted; the remote copy was already gone. Its damage is on the record: merging it (`3a3aa52`) reverted A-5 and left `ai/detect.py` with raw conflict markers on a `main` tagged "phase 2 signoff" that **did not parse** (fixed in `42b4edd`). The CI `compileall` gate (G-12) now makes that class of failure impossible to merge. |
 | ~~G-12~~ | ~~CI does not check `ai/` at all~~ | ✅ **Closed B3-0** | Added `python -m compileall -q ai backend` step to CI before ruff/pytest. D-0 process fix. |
+| ~~G-14~~ | ~~GPS teleportation guard inert on non-UTC servers~~ | ✅ **Closed S5-13** `8abbe91` | Person B | `/detect-image` stamped reports with naive **local** `datetime.now()` while the guard compares to `utcnow()`; the offset lands in the speed **denominator** (via `abs()`), so on UTC+5:30 a 202.6 km jump read as **37 km/h** and passed. Anti-spoofing was **off** on every non-UTC deployment, and reports were stored on a different clock to `issues.updated_at`. Found only because CI runs UTC. See §5f. |
+| **G-15** | `datetime.utcnow()` is deprecated (~7× in `main.py`, plus `models.py` column defaults) | 🟡 Medium | Person B | Warns throughout the suite; scheduled for removal. Durable form is `datetime.now(datetime.UTC)`. Deliberately **not** bundled into `8abbe91` to keep that commit scoped to the defect. Also worth making the `reports.timestamp` column timezone-**aware** rather than naive-UTC-by-convention — the convention is what failed in G-14. Phase-4 sweep. |
 
 | **G-13** | ~~Weights still not handed to Person B~~ | ✅ Acknowledged | Person A | Context documented in `claude.md`. Not a blocker for S5 (stub covers dev). |
 
@@ -582,9 +590,83 @@ adjacent one.*
 **Total tests: 81** (25 backend + 56 frontend). New `backend/test_model_registry.py` runs against the
 **real** `ai/models.json`, so a schema change on Person A's side breaks a test rather than the UI.
 
+> 🔴 **This "green" claim was also wrong — GitHub CI went red on the push.** Every gate above was run
+> locally and passed, but *locally* is a UTC+5:30 machine and CI runs UTC. Two `/detect-image` tests
+> failed there only. See **§5f** — it turned out to be a real production bug, not a test problem.
+
 > ⚠️ **Not yet verified live:** the Admin UI Sync button has not been clicked against a running
 > backend + Postgres. The endpoint is covered by an API-level test (`TestClient` → real DB), but the
 > button itself is untested in a browser. Worth one click before Phase 4.
+
+---
+
+## 5f. S5-13 — CI went red on push, and it found a real bug (`8abbe91`, 2026-07-17)
+
+**Symptom:** GitHub CI red — `test_detect_image_inference_down` and `test_detect_image_inference_fails`
+returned **422** instead of 503/502. Both pass locally. 23 passed, 2 failed.
+
+Two causes, tangled together. The second is a genuine production defect.
+
+### 1. Test pollution (introduced by the B3-6 work)
+
+`test_web_upload_gps_provenance_is_faked_end_to_end` committed a report under
+`vehicle_id="demo-web-upload"` — the **`Form` default** that the two failing tests inherit when they
+post no `vehicle_id`. They then looked like the *same vehicle* jumping **202.6 km** instantly, and
+`validate_gps_and_teleportation()` correctly rejected them with 422 before the inference mock was
+ever reached. Fixed: the test now owns `provenance-test-vehicle`.
+
+### 2. 🔴 Report timestamps were local time, not UTC — the teleportation guard was inert
+
+`POST /detect-image` stamped `timestamp=datetime.now()` (naive **local**) while
+`validate_gps_and_teleportation()` compares against `datetime.utcnow()`. Because that delta is
+`abs()`'d into the speed **denominator**, a non-UTC server does not merely skew the check — **it
+disables it**:
+
+| Environment | now() − utcnow() | 202.6 km jump computes as | Guard |
+|---|---|---|---|
+| Dev box (IST, UTC+5:30) | **+5.5 h** phantom gap | **37 km/h** | ❌ passes — **guard inert** |
+| GitHub CI (UTC) | ~0.05 s | **14,589,304 km/h** | ✅ 422 fires |
+
+So **GPS teleportation validation has never functioned on any non-UTC deployment** — the exact
+anti-spoofing check B3-9 is meant to harden. It also stored reports in local time while
+`issues.updated_at`/`/repair` use UTC — **two clocks in one schema**, which would skew the `/analytics`
+time-series and the map's timestamp by the offset.
+
+**Fix:** stamp with the same `current_time` the guard already validated against — one clock, one
+instant. Regression test `test_report_timestamp_is_utc_not_local_time` **confirmed to fail on the old
+code**: *"report timestamp sits 5.5 h outside the UTC window"*.
+
+> ⚠️ **That regression test is only *sensitive* on a non-UTC machine** — in CI, `now()` and `utcnow()`
+> coincide and it passes either way. This is the right way round (the bug only manifests in a real
+> timezone, i.e. on a dev box or a real deployment) but **a green CI run is not proof it stays fixed.**
+
+### The interaction — why local was green and CI was red
+
+**The timezone bug was masking the test pollution.** The 5.5 h phantom gap made the 202.6 km jump look
+like a leisurely 37 km/h, so locally the guard stayed quiet and the polluted state was invisible.
+Remove the timezone offset (i.e. run in UTC, i.e. run CI) and both surface at once.
+
+### Process fix — reproduce CI's environment, don't trust the ambient one
+
+A local pass was never evidence about CI, because this machine is not in CI's timezone. **`TZ=UTC`
+works through the Bash tool** (verified: offset drops to −0.00 h), so the suite is now run in CI's
+zone before any claim of green:
+
+| Zone | Result |
+|---|---|
+| `TZ=UTC` (**CI-equivalent**) | ✅ **26 passed** |
+| ambient IST (+5:30) | ✅ 26 passed |
+| `TZ=America/Los_Angeles` (−7, **opposite sign**) | ✅ 26 passed |
+
+The opposite-sign zone is deliberate — it proves the fix is not merely correct in one direction.
+`ruff format` also caught the new test file, the same gate §5d had missed.
+
+**Totals: 82** (26 backend + 56 frontend).
+
+> 📌 **Debt noted, deliberately not fixed here:** `datetime.utcnow()` is **deprecated** and warns
+> throughout the suite; the durable form is `datetime.now(datetime.UTC)`. It appears ~7× in `main.py`
+> plus `models.py` defaults. Left alone to keep `8abbe91` scoped to the defect — worth a dedicated
+> sweep in Phase 4 (see §7).
 
 ---
 
@@ -656,8 +738,8 @@ across versions. **Person B cannot make this call alone — it needs the PRD own
 
 ## 7. Phase 4 (Deployment & Edge Cases) — Starting Position
 
-**Phase 3 platform status: feature-complete except B3-3 / B3-7 / B3-9.** Everything is committed,
-CI is green on every gate, 81 tests pass, and S5 is verified live.
+**Phase 3 platform status: feature-complete except B3-3 / B3-7 / B3-9.** Everything is committed and
+pushed (`8abbe91`), CI is green on every gate, 82 tests pass, and S5 is verified live.
 
 ### Entry criteria — carried over, must land before/early in Phase 4
 
@@ -667,7 +749,7 @@ CI is green on every gate, 81 tests pass, and S5 is verified live.
 | **A3-5** | Field validation from a real vehicle | A | Largest untested risk. Every accuracy claim is out-of-domain until this exists. |
 | **B3-3** | Road Health Score | B | Last unbuilt Phase-3 platform feature. |
 | **B3-7** | Performance validation (~10k reports, p95 `/map` + `/analytics` < 2 s) | B | Indexes exist (`d7a1f0962038`) + `scripts/seed_10k_reports.py`; **never actually measured**. |
-| **B3-9** | Security — `SECRET_KEY` rotation, GPS validation, encrypted uploads | B | `SECRET_KEY` still has a dev default in `auth.py`. **Hard blocker for any public deployment.** |
+| **B3-9** | Security — `SECRET_KEY` rotation, GPS validation, encrypted uploads | B | `SECRET_KEY` still has a dev default in `auth.py`. **Hard blocker for any public deployment.** ⚠️ **The GPS-validation half is less done than it looked**: the teleportation guard was *inert on every non-UTC server* until S5-13 (G-14) — it has therefore never actually run in anger. Re-audit it, don't assume it works. |
 
 ### Phase 4 scope
 
@@ -677,12 +759,15 @@ CI is green on every gate, 81 tests pass, and S5 is verified live.
 4. **Latency headroom** — A3-6 passes at **93.7 ms against a 100 ms budget: a 6% margin**. Depth (A3-3) or segmentation would blow it. 93.7 ms ≈ **10 fps — not real-time for 30 fps video**; decide the sampling story explicitly.
 5. **`weather` enrichment** — stored by `enrichment.py`, rendered nowhere. Either surface it or drop the column (B3-5 residue).
 6. **Observability** — `/health` and `/admin/system-health` are live; no metrics, tracing or alerting.
+7. **Time hygiene sweep (G-15)** — migrate `datetime.utcnow()` → `datetime.now(datetime.UTC)` (deprecated, warns throughout the suite) and consider timezone-**aware** datetime columns. G-14 proved that "naive UTC by convention" is a convention that silently breaks; a server in a real timezone is a Phase-4 certainty, not a hypothetical.
 
 ### Known Phase-4 traps, learned the hard way
 
 - **A field must be listed in 3 places** to reach the map (backend `properties` → `mapUtils.mapFeatureToIssue` → component). Miss one and it is `undefined` with **no error anywhere** — this bit B3-6 twice.
 - **Fail closed on provenance and trust.** Every `gps_source` consumer independently defaulted a missing value to `"exif"` and rendered faked pins as verified.
-- **Verify the gate you claim.** §5d called CI green having run only one of the two ruff steps.
+- **Verify the gate you claim, in the environment that claims it.** §5d called CI green having run one of two ruff steps; §5e called it green from a UTC+5:30 box while CI runs UTC. Both were wrong. Run `TZ=UTC` (§4).
+- **Never mix `now()` and `utcnow()`.** G-14: one naive-local timestamp silently disabled a security check for months, and was invisible in UTC. If a check divides by a time delta, a clock mismatch doesn't skew it — it *disables* it.
+- **A test that commits data must own its `vehicle_id`.** Sharing a `Form` default let one test's report trip another's teleportation guard (§5f).
 - **"Done" must mean committed.** 34 files of "✅ Done" Phase-3 work were never in git.
 - **Green tests ≠ working feature.** B3-6 was test-green end-to-end while broken in the browser. The manual click found it. **Drive the UI.**
 
