@@ -1,4 +1,5 @@
 import io
+from datetime import datetime
 from unittest.mock import patch, AsyncMock, MagicMock
 import pytest
 from fastapi.testclient import TestClient
@@ -140,11 +141,17 @@ def test_web_upload_gps_provenance_is_faked_end_to_end(mock_post, mock_s3, clien
     img_byte_arr.seek(0)
 
     # Exactly what the "Demo Telemetry Upload" panel sends: no gps_source field.
+    #
+    # vehicle_id is deliberately NOT the "demo-web-upload" Form default that the
+    # UI sends. This test commits a report, and the tests below post with no
+    # vehicle_id — so sharing the default would leave them a 200 km-distant
+    # previous fix for the same vehicle and trip the teleportation guard. Own
+    # your own vehicle: this test is about gps_source, not about the plate.
     files = {"file": ("google_image.jpg", img_byte_arr, "image/jpeg")}
     data = {
         "latitude": 18.5204,
         "longitude": 73.8567,
-        "vehicle_id": "demo-web-upload",
+        "vehicle_id": "provenance-test-vehicle",
     }
 
     response = client.post("/detect-image", files=files, data=data)
@@ -170,6 +177,70 @@ def test_web_upload_gps_provenance_is_faked_end_to_end(mock_post, mock_s3, clien
     # is populated asynchronously by the background task, so assert on the key
     # (the popup reads it) rather than on a resolved road name.
     assert "road_name" in props, "/map dropped road_name — B3-5 regression"
+
+
+@patch(
+    "s3_storage.upload_image_bytes_to_s3",
+    return_value="http://minio/roadsense/test.jpg",
+)
+@patch("httpx.AsyncClient.post", new_callable=AsyncMock)
+def test_report_timestamp_is_utc_not_local_time(mock_post, mock_s3, client):
+    """Report timestamps must be UTC, matching validate_gps_and_teleportation().
+
+    /detect-image used to stamp reports with datetime.now() — naive *local* time —
+    while the teleportation guard compares against datetime.utcnow(). On any
+    non-UTC server the two disagree by the TZ offset, and since that delta is
+    abs()'d into the speed denominator it silently DISABLES the guard: on UTC+5:30
+    a 202 km jump computed as 37 km/h and passed. It also meant reports were
+    stored in local time while issues.updated_at was UTC.
+
+    NOTE ON COVERAGE: this assertion is only *sensitive* on a machine whose local
+    zone is not UTC — in CI (UTC) now() and utcnow() coincide and it passes either
+    way. That is deliberate and it is the right way round: the bug is invisible in
+    UTC and only manifests on a real deployment in a real timezone, so the guard
+    belongs where such a machine exists — a dev box. Do not read a green CI run as
+    proof this is fixed.
+    """
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "model_version": "roadsense-stub-v2",
+        "image": {"width": 64, "height": 64},
+        "inference_ms": 5,
+        "detections": [],
+    }
+    mock_post.return_value = mock_response
+
+    img = Image.new("RGB", (64, 64), color="red")
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG")
+    buf.seek(0)
+
+    before = datetime.utcnow()
+    res = client.post(
+        "/detect-image",
+        files={"file": ("tz.jpg", buf, "image/jpeg")},
+        data={
+            "latitude": 12.9716,
+            "longitude": 77.5946,
+            "vehicle_id": "tz-test-vehicle",
+        },
+    )
+    after = datetime.utcnow()
+    assert res.status_code == 201
+
+    stamped = datetime.fromisoformat(res.json()["timestamp"])
+    if stamped.tzinfo is not None:
+        stamped = stamped.replace(tzinfo=None)
+
+    skew = min(
+        abs((stamped - before).total_seconds()), abs((stamped - after).total_seconds())
+    )
+    assert before <= stamped <= after, (
+        f"report timestamp {stamped} is not UTC — it sits {skew / 3600:.1f} h "
+        f"outside the UTC window [{before}, {after}]. A local-time stamp here "
+        "disables the teleportation guard on any non-UTC server."
+    )
 
 
 @patch(

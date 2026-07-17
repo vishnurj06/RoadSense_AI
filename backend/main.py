@@ -649,7 +649,14 @@ async def detect_image(
     db_report = models.Report(
         id=report_id,
         vehicle_id=vehicle_id,
-        timestamp=datetime.now(),
+        # MUST be UTC. This was datetime.now() (naive *local* time) while
+        # validate_gps_and_teleportation() above compares against utcnow(), so on
+        # any non-UTC server the two disagree by the TZ offset. Because that
+        # delta is abs()'d into the speed denominator, it silently *disables* the
+        # teleportation guard: on a UTC+5:30 box a 202 km jump reads as 37 km/h
+        # and sails through. It also stored report timestamps in local time while
+        # issues.updated_at is UTC — two clocks in one schema.
+        timestamp=current_time,
         latitude=latitude,
         longitude=longitude,
         geom=f"POINT({longitude} {latitude})",
