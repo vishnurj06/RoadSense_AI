@@ -265,6 +265,61 @@ falsified hypotheses. Anyone proposing "just train it longer / feed it more" sho
 table. **The remaining levers are: better labels, a domain-matched dataset (real dashcam footage), or
 accepting a lower, honest target.**
 
+## A3-3 — monocular depth CANNOT measure pothole depth. Measured, not assumed.
+
+A3-3 says: *integrate MiDaS / Depth-Anything → real `depth_cm`*. **Tested before building. It does not
+work, and no bigger model fixes it.**
+
+### The physics says it shouldn't work
+
+The PRD wants **pothole depth** ("estimated depth") — how deep the hole is — not distance to camera.
+A pothole is **2-15 cm deep** viewed from **3-10 m**: a **0.5-5%** change in depth. Monocular depth
+models carry **5-15% relative error**. **The signal sits under the noise floor.**
+
+### The test
+
+For every detected pothole, compare the depth *inside* the box against the road plane in a ring
+*around* it. A real pothole **must** read as further away — a dip. Run on `india_frames` (close-range,
+large, **water-filled** potholes) — deliberately the **easiest case we have**.
+
+| model | reads as a DIP (physically correct) | median \|SNR\| vs road texture |
+|---|---|---|
+| Depth-Anything **V2-Small** | **44%** | 1.03 |
+| Depth-Anything **V2-Base** (4x bigger) | **50%** | 1.04 |
+| *random guessing* | *50%* | — |
+
+**It cannot tell a hole from a bump.** V2-Small is *worse than a coin flip*; V2-Base is *exactly* a
+coin flip. It called a 0.72-confidence pothole a **bump**. `SNR ≈ 1.0` means the pothole "signal" is
+the same size as the road's own surface texture.
+
+**A 4x bigger model bought exactly nothing** — which is the tell that this is a physics limit, not a
+capacity limit. Scaling further is pointless.
+
+**And this was the best case.** Close-range, large, water-filled holes filling much of the frame. On
+dashcam footage (potholes far smaller and further) it can only be worse.
+
+### Decision: `depth_cm` stays `null`. Not built.
+
+Contract v3 §3.1 says `depth_cm` null means *"not estimated, **never** a guess"*. Populating it from a
+coin flip would be the single most dishonest thing in this codebase — a number that looks metric,
+carries a unit, and is noise. **A3-3 as specified is not achievable with monocular depth.**
+
+Not shipped: no `transformers`/`timm` in `requirements.txt`, no second model per frame, and the 6%
+latency margin (A3-6) is untouched. **Latency never even had to be measured** — the model doesn't
+work, so its cost is moot.
+
+### What could actually work (none are A3-3 as written)
+
+1. **Stereo camera / depth sensor** — real depth, needs hardware. The PRD already lists Jetson; a
+   stereo rig is the honest answer.
+2. **Structure-from-Motion** — a *moving* dashcam sees each pothole from many angles; parallax gives
+   real geometry. Plausible, and it only works *because* the vehicle moves. Substantial build.
+3. **A reference object of known size** in frame — calibration, impractical in the field.
+4. **Keep relative severity** (what A-5 ships) and **stop claiming cm.** Honest, free, already done.
+
+**Recommendation: (4) now, (2) if depth becomes a real requirement.** Severity today is
+distance-invariant and honest about being relative — that is worth more than a fabricated centimetre.
+
 ## Note on `docs/codebase_audit_report.md` (2026-07-16) — stale on the AI track
 
 That audit predates / could not see this model, and three of its AI findings are **wrong now**:
