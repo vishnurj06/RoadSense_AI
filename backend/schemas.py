@@ -37,8 +37,13 @@ class ReportCreate(BaseModel):
     vehicle_id: str = Field(..., description="ID of the reporting vehicle")
     timestamp: datetime = Field(..., description="Timestamp of the detection")
     gps: GPSCoordinates = Field(..., description="GPS coordinates")
+    # B3-6: default None ("unknown"), NEVER "exif". This mirrors ReportResponse
+    # below — defaulting to a real source silently launders an unknown or faked
+    # location into a verified-looking one, which is the exact Phase-2 failure
+    # B3-6 exists to prevent. POST /detect-image already defaults to the safe
+    # "faked" (main.py); this is the same rule for POST /detect.
     gps_source: Optional[str] = Field(
-        "exif", description="Source of GPS (e.g. exif, gpx, faked)"
+        None, description="Source of GPS: exif | gpx | faked. None = unknown."
     )
     detections: List[DetectionCreate] = Field(
         default=[], description="Hazards detected"
