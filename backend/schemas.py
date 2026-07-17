@@ -37,7 +37,9 @@ class ReportCreate(BaseModel):
     vehicle_id: str = Field(..., description="ID of the reporting vehicle")
     timestamp: datetime = Field(..., description="Timestamp of the detection")
     gps: GPSCoordinates = Field(..., description="GPS coordinates")
-    gps_source: Optional[str] = Field("exif", description="Source of GPS (e.g. exif, gpx, faked)")
+    gps_source: Optional[str] = Field(
+        "exif", description="Source of GPS (e.g. exif, gpx, faked)"
+    )
     detections: List[DetectionCreate] = Field(
         default=[], description="Hazards detected"
     )
@@ -146,9 +148,15 @@ class UserRoleUpdate(BaseModel):
 class VehicleCreate(BaseModel):
     """Payload for POST /fleet/vehicles."""
 
-    plate: str = Field(..., min_length=1, max_length=20, description="Vehicle registration plate")
-    model: Optional[str] = Field(None, max_length=100, description="Vehicle model, e.g. Toyota HiAce")
-    camera_id: Optional[str] = Field(None, max_length=100, description="Camera/device serial number")
+    plate: str = Field(
+        ..., min_length=1, max_length=20, description="Vehicle registration plate"
+    )
+    model: Optional[str] = Field(
+        None, max_length=100, description="Vehicle model, e.g. Toyota HiAce"
+    )
+    camera_id: Optional[str] = Field(
+        None, max_length=100, description="Camera/device serial number"
+    )
     status: str = Field("active", pattern="^(active|inactive|maintenance)$")
 
 
@@ -166,7 +174,7 @@ class VehicleResponse(BaseModel):
     registered_at: datetime
 
     # Derived at API layer — not stored in DB
-    camera_health: str = "unknown"   # "online" | "stale" | "offline" | "unknown"
+    camera_health: str = "unknown"  # "online" | "stale" | "offline" | "unknown"
     report_count: int = 0
 
 
@@ -305,17 +313,22 @@ class AIModelResponse(BaseModel):
 
 # ── Road Health Score schemas (B3-3) ─────────────────────────────────────────
 
+
 class RoadHealthSegmentResponse(BaseModel):
     """A single hexagon segment with its computed health score."""
+
     hex_id: str
     center_lat: float
     center_lon: float
     health_score: float
     total_issues: int
     total_reports: int
-    polygon: List[List[float]] = Field(..., description="Array of [lat, lon] coordinates forming the hexagon")
+    polygon: List[List[float]] = Field(
+        ..., description="Array of [lat, lon] coordinates forming the hexagon"
+    )
 
 
 class RoadHealthResponse(BaseModel):
     """Payload for GET /analytics/road-health."""
+
     segments: List[RoadHealthSegmentResponse]

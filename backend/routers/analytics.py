@@ -11,12 +11,14 @@ from database import get_db
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
 
+
 @router.get("", response_model=dict)
 def get_analytics(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth.get_current_user),
 ):
     from main import get_cache, set_cache
+
     cache_key = "cache_analytics"
     cached = get_cache(cache_key)
     if cached is not None:
@@ -84,6 +86,7 @@ def get_road_health(
     current_user: models.User = Depends(auth.get_current_user),
 ):
     from main import get_cache, set_cache
+
     cache_key = "cache_road_health"
     cached = get_cache(cache_key)
     if cached is not None:
@@ -139,7 +142,9 @@ def get_road_health(
         issues_data = row.issues_data or []
 
         # In case json_agg returns [null] due to empty join
-        issues_data = [item for item in issues_data if item is not None and item.get("severity")]
+        issues_data = [
+            item for item in issues_data if item is not None and item.get("severity")
+        ]
 
         if total_reports == 0 and not issues_data:
             continue
@@ -153,7 +158,9 @@ def get_road_health(
             updated_at_str = issue.get("updated_at")
             if updated_at_str:
                 try:
-                    updated_at = datetime.fromisoformat(updated_at_str.replace("Z", "+00:00"))
+                    updated_at = datetime.fromisoformat(
+                        updated_at_str.replace("Z", "+00:00")
+                    )
                     updated_at = updated_at.replace(tzinfo=None)
                 except ValueError:
                     updated_at = now
@@ -186,15 +193,17 @@ def get_road_health(
 
         polygon = row.polygon or []
 
-        segments.append({
-            "hex_id": f"hex_{row.i}_{row.j}",
-            "center_lat": row.center_lat,
-            "center_lon": row.center_lon,
-            "health_score": round(health_score, 1),
-            "total_issues": total_issues,
-            "total_reports": total_reports,
-            "polygon": polygon
-        })
+        segments.append(
+            {
+                "hex_id": f"hex_{row.i}_{row.j}",
+                "center_lat": row.center_lat,
+                "center_lon": row.center_lon,
+                "health_score": round(health_score, 1),
+                "total_issues": total_issues,
+                "total_reports": total_reports,
+                "polygon": polygon,
+            }
+        )
 
     response_data = {"segments": segments}
     set_cache(cache_key, response_data, expire=300)

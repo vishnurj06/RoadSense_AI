@@ -94,7 +94,9 @@ def _set_last_email_time(user_id: str, ts: datetime, redis_client) -> None:
     _local_last_email[user_id] = ts
 
 
-def _get_or_create_prefs(user: models.User, db: Session) -> models.NotificationPreference:
+def _get_or_create_prefs(
+    user: models.User, db: Session
+) -> models.NotificationPreference:
     """Fetch or lazily create a NotificationPreference row for *user*."""
     prefs = (
         db.query(models.NotificationPreference)
@@ -150,12 +152,12 @@ def _build_email(
                   box-shadow:0 2px 8px rgba(0,0,0,.08);padding:32px">
         <h2 style="margin:0 0 8px;color:#e53e3e">⚠️ High-Severity Road Issue Detected</h2>
         <p style="color:#718096;margin:0 0 24px;font-size:14px">
-          RoadSense AI Platform • {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}
+          RoadSense AI Platform • {datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")}
         </p>
         <table style="width:100%;border-collapse:collapse;font-size:15px">
           <tr><td style="padding:8px 0;color:#718096;width:100px">Type</td>
               <td style="padding:8px 0;font-weight:600">
-                {issue.class_name.replace('_',' ').title()}</td></tr>
+                {issue.class_name.replace("_", " ").title()}</td></tr>
           <tr style="background:#fff5f5">
               <td style="padding:8px 0;color:#718096">Severity</td>
               <td style="padding:8px 0;font-weight:700;color:#e53e3e;text-transform:uppercase">
@@ -164,7 +166,7 @@ def _build_email(
               <td style="padding:8px 0">{issue.latitude:.5f}, {issue.longitude:.5f}</td></tr>
           <tr style="background:#f0fff4">
               <td style="padding:8px 0;color:#718096">Detected</td>
-              <td style="padding:8px 0">{issue.created_at.strftime('%Y-%m-%d %H:%M UTC')}</td></tr>
+              <td style="padding:8px 0">{issue.created_at.strftime("%Y-%m-%d %H:%M UTC")}</td></tr>
         </table>
         <div style="margin-top:28px">
           <a href="http://localhost:3000"
@@ -203,12 +205,12 @@ def _send_email(to_address: str, issue: models.Issue) -> bool:
             msg["Subject"],
         )
         print(
-            f"\n{'='*72}\n"
+            f"\n{'=' * 72}\n"
             f"📧  SMTP MOCK — email digest (not actually sent)\n"
             f"  To      : {to_address}\n"
             f"  Subject : {msg['Subject']}\n"
             f"  Issue   : {issue.id} | {issue.class_name} | {issue.severity}\n"
-            f"{'='*72}\n",
+            f"{'=' * 72}\n",
             flush=True,
         )
         return True

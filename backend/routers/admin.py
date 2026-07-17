@@ -5,6 +5,7 @@ Routes
 ------
 GET  /admin/models              — list all registered model versions
 POST /admin/models              — register a new model version
+POST /admin/models/sync         — upsert ai/models.json into the DB registry
 POST /admin/models/{id}/activate — set one model active, deactivate all others
 
 All endpoints are restricted to the `admin` role.
@@ -22,6 +23,7 @@ Design notes
   Phase 4 can add a watcher that reads `is_active` and reloads the model.
 """
 
+import json
 import uuid
 from datetime import datetime
 from typing import List
@@ -29,6 +31,7 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+import model_registry
 import models
 import schemas
 from database import get_db
@@ -42,6 +45,7 @@ _ADMIN_ONLY = RoleChecker(["admin"])
 # ─────────────────────────────────────────────────────────────────────────────
 # GET /admin/models
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 @router.get(
     "/models",
@@ -57,16 +61,13 @@ def list_models(
 
     The active model is the one with `is_active=True` (at most one at a time).
     """
-    return (
-        db.query(models.AIModel)
-        .order_by(models.AIModel.registered_at.desc())
-        .all()
-    )
+    return db.query(models.AIModel).order_by(models.AIModel.registered_at.desc()).all()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # POST /admin/models
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 @router.post(
     "/models",
@@ -130,8 +131,58 @@ def register_model(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# POST /admin/models/sync
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@router.post(
+    "/models/sync",
+    summary="Sync the DB registry from Person A's ai/models.json",
+)
+def sync_models(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(_ADMIN_ONLY),
+):
+    """
+    Upsert every entry from `ai/models.json` (A3-7) into the `ai_models` table.
+
+    `ai/models.json` is the **distribution** catalog — what Person A has published,
+    where to fetch it, its SHA256 and its known weaknesses. This table is the
+    **deployment** registry — what is registered and activated *here*. Sync
+    bridges the two so the Admin UI shows real versions instead of an empty list.
+
+    Idempotent. Re-running refreshes metadata for known versions and inserts new
+    ones. It never overrides an admin's activation choice: it only activates the
+    file's `default` when no model is active at all (i.e. a fresh install).
+    """
+    try:
+        summary = model_registry.sync_registry_to_db(db)
+    except FileNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=(
+                f"Model registry not found at {model_registry.REGISTRY_PATH}. "
+                "Pull the latest ai/ from main, or set MODELS_REGISTRY_PATH."
+            ),
+        )
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"ai/models.json is not valid JSON: {exc}",
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Model registry sync failed: {exc}",
+        ) from exc
+
+    return summary
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # POST /admin/models/{model_id}/activate
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 @router.post(
     "/models/{model_id}/activate",
@@ -171,9 +222,7 @@ def activate_model(
 
     try:
         # Step 1: deactivate all
-        db.query(models.AIModel).update(
-            {"is_active": False}, synchronize_session=False
-        )
+        db.query(models.AIModel).update({"is_active": False}, synchronize_session=False)
         # Step 2: activate target
         target.is_active = True
         db.commit()

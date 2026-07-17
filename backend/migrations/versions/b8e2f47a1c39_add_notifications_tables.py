@@ -29,14 +29,23 @@ def upgrade() -> None:
         sa.Column("id", sa.String(length=36), nullable=False),
         sa.Column("user_id", sa.String(length=36), nullable=False),
         # Minimum severity that triggers a notification: low | medium | high
-        sa.Column("min_severity", sa.String(length=10), nullable=False, server_default="high"),
+        sa.Column(
+            "min_severity", sa.String(length=10), nullable=False, server_default="high"
+        ),
         # Whether to receive email digests
-        sa.Column("email_enabled", sa.Boolean(), nullable=False, server_default=sa.true()),
+        sa.Column(
+            "email_enabled", sa.Boolean(), nullable=False, server_default=sa.true()
+        ),
         # Optional bounding-box filter  [lat_min, lon_min, lat_max, lon_max]  NULL = anywhere
         sa.Column("area_filter", sa.JSON(), nullable=True),
         # Minimum seconds between consecutive email digests for the same user
         # Default: 300 s = 5 min  →  a 50-detection burst produces exactly 1 email
-        sa.Column("digest_interval_seconds", sa.Integer(), nullable=False, server_default="300"),
+        sa.Column(
+            "digest_interval_seconds",
+            sa.Integer(),
+            nullable=False,
+            server_default="300",
+        ),
         sa.Column("updated_at", sa.DateTime(), nullable=False),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),

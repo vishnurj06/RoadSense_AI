@@ -32,6 +32,7 @@ router = APIRouter(prefix="/notifications", tags=["notifications"])
 # GET /notifications
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 @router.get(
     "",
     response_model=schemas.NotificationListResponse,
@@ -97,6 +98,7 @@ def get_notifications(
 # POST /notifications/{id}/read
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 @router.post(
     "/{notification_id}/read",
     response_model=schemas.NotificationResponse,
@@ -134,6 +136,7 @@ def mark_notification_read(
 # POST /notifications/read-all
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 @router.post(
     "/read-all",
     summary="Mark all unread notifications as read",
@@ -158,6 +161,7 @@ def mark_all_read(
 # ─────────────────────────────────────────────────────────────────────────────
 # GET /notifications/preferences
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 @router.get(
     "/preferences",
@@ -194,6 +198,7 @@ def get_preferences(
 # ─────────────────────────────────────────────────────────────────────────────
 # PUT /notifications/preferences
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 @router.put(
     "/preferences",

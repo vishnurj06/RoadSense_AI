@@ -27,7 +27,9 @@ def upgrade() -> None:
         sa.Column("plate", sa.String(length=20), nullable=False),
         sa.Column("model", sa.String(length=100), nullable=True),
         sa.Column("camera_id", sa.String(length=100), nullable=True),
-        sa.Column("status", sa.String(length=20), nullable=False, server_default="active"),
+        sa.Column(
+            "status", sa.String(length=20), nullable=False, server_default="active"
+        ),
         sa.Column("last_seen", sa.DateTime(), nullable=True),
         sa.Column("registered_at", sa.DateTime(), nullable=False),
         sa.PrimaryKeyConstraint("id"),

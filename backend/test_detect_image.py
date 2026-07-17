@@ -159,9 +159,7 @@ def test_web_upload_gps_provenance_is_faked_end_to_end(mock_post, mock_s3, clien
     assert map_res.status_code == 200
     features = map_res.json()["features"]
     uploaded = [
-        f
-        for f in features
-        if abs(f["geometry"]["coordinates"][0] - 73.8567) < 0.001
+        f for f in features if abs(f["geometry"]["coordinates"][0] - 73.8567) < 0.001
     ]
     assert uploaded, "uploaded report did not appear on /map"
     props = uploaded[0]["properties"]

@@ -193,12 +193,32 @@ function SystemHealthPanel({ systemHealth }) {
  * The active row is highlighted with a green ring.
  * Component manages its own data-fetching state so page.js stays clean.
  */
+/**
+ * Person A's registry (ai/models.json) is explicit on two points: RDD test AP is
+ * NOT comparable across versions (v3 was scored on India-only, v4 on all six
+ * countries), and the real-footage numbers are the ship gate. So the headline
+ * cell shows the real-footage hit rate and RDD AP is demoted to a labelled
+ * secondary line carrying his own caveat — rendering his caveated number as a
+ * bare "mAP50" would launder exactly the warning he attached to it.
+ */
+function getShipGate(metrics) {
+  return metrics?.real_footage_pothole_frames_hit ?? null;
+}
+
+/** RDD AP, with fallbacks for models registered by hand via POST /admin/models. */
+function getRddAp(metrics) {
+  const v = metrics?.rdd_test_map50 ?? metrics?.map50 ?? metrics?.mAP50;
+  return typeof v === "number" ? v : null;
+}
+
 function ModelRegistryPanel() {
   const [models, setModels] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   /** ID of the model currently being activated (shows spinner in button). */
   const [activating, setActivating] = useState(null);
+  /** True while POST /admin/models/sync is in flight. */
+  const [syncing, setSyncing] = useState(false);
 
   // No synchronous setState — every write happens after an await, so the mount
   // effect can call this directly (react-hooks/set-state-in-effect). `loading`
@@ -246,6 +266,30 @@ function ModelRegistryPanel() {
     }
   };
 
+  /**
+   * B3-4: pull Person A's ai/models.json into the DB registry, then refresh.
+   * Idempotent server-side, and it never overrides a deliberate activation.
+   */
+  const handleSync = async () => {
+    try {
+      setSyncing(true);
+      setError(null);
+      const res = await fetch(`${BACKEND_URL}/admin/models/sync`, {
+        method: "POST",
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const e = await res.json().catch(() => ({}));
+        throw new Error(e.detail || `Sync failed (HTTP ${res.status})`);
+      }
+      await fetchModels();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   return (
     <section
       className="bg-slate-900/40 border border-slate-800/60 p-4 rounded-2xl flex flex-col gap-3 shrink-0"
@@ -257,16 +301,28 @@ function ModelRegistryPanel() {
           <Compass className="h-4 w-4 text-blue-400" />
           <span>AI MODEL REGISTRY</span>
         </div>
-        <button
-          onClick={() => { setLoading(true); fetchModels(); }}
-          disabled={loading}
-          className="flex items-center gap-1 text-[10px] font-semibold text-slate-500 hover:text-slate-300 transition disabled:opacity-40 cursor-pointer"
-          title="Refresh model list"
-          id="refresh-model-registry"
-        >
-          <RefreshCw className={`h-3 w-3 ${loading ? "animate-spin text-blue-400" : ""}`} />
-          Refresh
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={handleSync}
+            disabled={syncing || loading}
+            className="flex items-center gap-1 text-[10px] font-semibold text-blue-400 hover:text-blue-300 transition disabled:opacity-40 cursor-pointer"
+            title="Import versions from ai/models.json (Person A's registry)"
+            id="sync-model-registry"
+          >
+            <PackageCheck className={`h-3 w-3 ${syncing ? "animate-pulse" : ""}`} />
+            {syncing ? "Syncing…" : "Sync"}
+          </button>
+          <button
+            onClick={() => { setLoading(true); fetchModels(); }}
+            disabled={loading}
+            className="flex items-center gap-1 text-[10px] font-semibold text-slate-500 hover:text-slate-300 transition disabled:opacity-40 cursor-pointer"
+            title="Refresh model list"
+            id="refresh-model-registry"
+          >
+            <RefreshCw className={`h-3 w-3 ${loading ? "animate-spin text-blue-400" : ""}`} />
+            Refresh
+          </button>
+        </div>
       </div>
 
       {/* ── Error banner ── */}
@@ -293,11 +349,16 @@ function ModelRegistryPanel() {
             <PackageCheck className="h-8 w-8 text-slate-700" />
             <p className="text-xs text-slate-600">No models registered yet.</p>
             <p className="text-[10px] text-slate-700 max-w-[16rem]">
-              Use{" "}
+              Hit <span className="text-blue-400 font-semibold">Sync</span> to import
+              Person A&apos;s published versions from{" "}
+              <code className="bg-slate-800 px-1 rounded text-slate-400">
+                ai/models.json
+              </code>
+              , or register one by hand with{" "}
               <code className="bg-slate-800 px-1 rounded text-slate-400">
                 POST /admin/models
-              </code>{" "}
-              to register the first version.
+              </code>
+              .
             </p>
           </div>
         )}
@@ -344,7 +405,7 @@ function ModelRegistryPanel() {
               )}
             </div>
 
-            {/* Metrics row */}
+            {/* Metrics row — real footage is the ship gate, not RDD AP */}
             <div className="grid grid-cols-3 gap-2 text-[9px]">
               <div className="flex flex-col">
                 <span className="text-slate-600 uppercase font-bold">Classes</span>
@@ -359,20 +420,47 @@ function ModelRegistryPanel() {
               <div className="flex flex-col">
                 <span className="text-slate-600 uppercase font-bold">Conf</span>
                 <span className="text-slate-300 font-semibold mt-0.5">
-                  {m.conf_threshold.toFixed(2)}
-                </span>
-              </div>
-              <div className="flex flex-col">
-                <span className="text-slate-600 uppercase font-bold">mAP50</span>
-                <span className="text-slate-300 font-semibold mt-0.5">
-                  {m.metrics?.map50 != null
-                    ? m.metrics.map50.toFixed(3)
-                    : m.metrics?.mAP50 != null
-                    ? m.metrics.mAP50.toFixed(3)
+                  {typeof m.conf_threshold === "number"
+                    ? m.conf_threshold.toFixed(2)
                     : "—"}
                 </span>
               </div>
+              <div className="flex flex-col">
+                <span
+                  className="text-slate-600 uppercase font-bold"
+                  title="Pothole frames hit on real footage — the ship gate"
+                >
+                  Real footage
+                </span>
+                <span
+                  className="text-slate-300 font-semibold mt-0.5 truncate"
+                  title={
+                    m.metrics?.real_footage_false_positives
+                      ? `${getShipGate(m.metrics)} frames hit · ${m.metrics.real_footage_false_positives} false positives`
+                      : undefined
+                  }
+                >
+                  {getShipGate(m.metrics) ?? "—"}
+                </span>
+              </div>
             </div>
+
+            {/* RDD AP — deliberately secondary and caveated (see getShipGate) */}
+            {getRddAp(m.metrics) != null && (
+              <div
+                className="text-[9px] text-slate-600"
+                title={
+                  m.metrics?._note ||
+                  "RDD test AP is not comparable across versions — different test splits."
+                }
+              >
+                RDD test mAP50{" "}
+                <span className="text-slate-500 font-semibold">
+                  {getRddAp(m.metrics).toFixed(3)}
+                </span>
+                <span className="italic"> · not comparable across versions</span>
+              </div>
+            )}
 
             {/* Class pills */}
             {(m.classes || []).length > 0 && (

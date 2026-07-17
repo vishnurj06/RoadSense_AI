@@ -1,6 +1,15 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, DateTime, Float, ForeignKey, JSON, Integer, Boolean
+from sqlalchemy import (
+    Column,
+    String,
+    DateTime,
+    Float,
+    ForeignKey,
+    JSON,
+    Integer,
+    Boolean,
+)
 from sqlalchemy.orm import relationship
 from geoalchemy2 import Geometry
 from database import Base
@@ -103,7 +112,10 @@ class User(Base):
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
     notification_preferences = relationship(
-        "NotificationPreference", back_populates="user", uselist=False, cascade="all, delete-orphan"
+        "NotificationPreference",
+        back_populates="user",
+        uselist=False,
+        cascade="all, delete-orphan",
     )
     notifications = relationship(
         "Notification", back_populates="user", cascade="all, delete-orphan"
@@ -124,10 +136,14 @@ class Vehicle(Base):
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     plate = Column(String(20), unique=True, index=True, nullable=False)
-    model = Column(String(100), nullable=True)   # e.g. "Toyota HiAce"
+    model = Column(String(100), nullable=True)  # e.g. "Toyota HiAce"
     camera_id = Column(String(100), nullable=True)  # device/camera serial
-    status = Column(String(20), nullable=False, default="active")  # active | inactive | maintenance
-    last_seen = Column(DateTime, nullable=True)  # updated on every /detect hit for this plate
+    status = Column(
+        String(20), nullable=False, default="active"
+    )  # active | inactive | maintenance
+    last_seen = Column(
+        DateTime, nullable=True
+    )  # updated on every /detect hit for this plate
     registered_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
 
@@ -141,7 +157,10 @@ class NotificationPreference(Base):
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     user_id = Column(
-        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, unique=True
+        String(36),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
     )
     # Severity threshold below which the user does NOT receive alerts
     min_severity = Column(String(10), nullable=False, default="high")
@@ -172,8 +191,8 @@ class Notification(Base):
     title = Column(String(200), nullable=False)
     body = Column(String(2000), nullable=True)
     # Link back to the triggering resource
-    resource_id = Column(String(36), nullable=True)    # e.g. issue UUID
-    resource_type = Column(String(50), nullable=True)   # e.g. "issue"
+    resource_id = Column(String(36), nullable=True)  # e.g. issue UUID
+    resource_type = Column(String(50), nullable=True)  # e.g. "issue"
     is_read = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
@@ -211,5 +230,3 @@ class AIModel(Base):
     # Optional admin notes: training config, dataset version, known weaknesses
     notes = Column(String(2000), nullable=True)
     registered_at = Column(DateTime, nullable=False, default=datetime.utcnow)
-
-

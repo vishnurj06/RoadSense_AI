@@ -25,8 +25,8 @@ router = APIRouter(prefix="/fleet", tags=["fleet"])
 
 # ── Camera health thresholds ──────────────────────────────────────────────────
 # A camera is "online" if it sent a report within this window.
-CAMERA_STALE_MINUTES = 30      # > 30 min → stale
-CAMERA_OFFLINE_MINUTES = 120   # > 2 h   → offline
+CAMERA_STALE_MINUTES = 30  # > 30 min → stale
+CAMERA_OFFLINE_MINUTES = 120  # > 2 h   → offline
 
 
 def _derive_camera_health(last_seen: Optional[datetime]) -> str:
@@ -61,6 +61,7 @@ def _enrich_vehicle(vehicle: models.Vehicle, db: Session) -> schemas.VehicleResp
 
 
 # ── POST /fleet/vehicles ──────────────────────────────────────────────────────
+
 
 @router.post(
     "/vehicles",
@@ -114,20 +115,27 @@ def register_vehicle(
 
 # ── GET /fleet/vehicles ───────────────────────────────────────────────────────
 
+
 @router.get(
     "/vehicles",
     response_model=schemas.VehicleListResponse,
     summary="List all registered vehicles with live camera health",
 )
 def list_vehicles(
-    status_filter: Optional[str] = Query(None, alias="status", description="Filter by status: active | inactive | maintenance"),
-    camera_health_filter: Optional[str] = Query(None, alias="camera_health", description="Filter by derived health: online | stale | offline | unknown"),
+    status_filter: Optional[str] = Query(
+        None,
+        alias="status",
+        description="Filter by status: active | inactive | maintenance",
+    ),
+    camera_health_filter: Optional[str] = Query(
+        None,
+        alias="camera_health",
+        description="Filter by derived health: online | stale | offline | unknown",
+    ),
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(
-        RoleChecker(["fleet", "admin", "authority"])
-    ),
+    current_user: models.User = Depends(RoleChecker(["fleet", "admin", "authority"])),
 ):
     """Return all registered fleet vehicles.
 
@@ -159,6 +167,7 @@ def list_vehicles(
 
 
 # ── GET /fleet/vehicles/{vehicle_id}/history ─────────────────────────────────
+
 
 @router.get(
     "/vehicles/{vehicle_id}/history",

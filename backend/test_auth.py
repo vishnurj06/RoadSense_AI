@@ -146,10 +146,12 @@ def test_admin_and_analytics_endpoints():
         assert len(res.json()) >= 3
 
         from unittest.mock import patch
-        with patch("main.psutil.cpu_percent", return_value=34.5), \
-             patch("main.psutil.virtual_memory") as mock_mem, \
-             patch("main.psutil.disk_usage") as mock_disk:
-            
+
+        with (
+            patch("main.psutil.cpu_percent", return_value=34.5),
+            patch("main.psutil.virtual_memory") as mock_mem,
+            patch("main.psutil.disk_usage") as mock_disk,
+        ):
             mock_mem.return_value.percent = 58.2
             mock_mem.return_value.used = 8 * 1024 * 1024
             mock_mem.return_value.total = 16 * 1024 * 1024

@@ -30,6 +30,7 @@ import auth
 import s3_storage
 from routers import fleet, notifications, admin, analytics
 import notification_service
+import model_registry
 from enrichment import enrich_report
 
 INFERENCE_URL = os.getenv("INFERENCE_URL", "http://localhost:8001")
@@ -130,11 +131,16 @@ def seed_users():
 
 
 seed_users()
+# B3-4: populate the model registry from Person A's ai/models.json (A3-7) so a
+# fresh install shows real versions. Best-effort — never blocks startup.
+model_registry.seed_model_registry()
 s3_storage.init_s3_bucket()
 
 
 # Helper function for spatial clustering
-def cluster_report_to_issue(db: Session, report: models.Report) -> "models.Issue | None":
+def cluster_report_to_issue(
+    db: Session, report: models.Report
+) -> "models.Issue | None":
     """Cluster *report* into an existing Issue or create a new one.
 
     Returns the newly-created Issue if one was created, or None if the report
@@ -288,12 +294,9 @@ def get_active_model_version(db: Session) -> str | None:
     carry a model_version field (e.g. the stub, or an older infer_service).
     Returns None if the registry is empty (no models registered yet).
     """
-    active = (
-        db.query(models.AIModel)
-        .filter(models.AIModel.is_active.is_(True))
-        .first()
-    )
+    active = db.query(models.AIModel).filter(models.AIModel.is_active.is_(True)).first()
     return active.version if active else None
+
 
 @app.post(
     "/auth/register",
@@ -412,27 +415,53 @@ def haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     R = 6371.0  # Earth radius in kilometers
     dLat = math.radians(lat2 - lat1)
     dLon = math.radians(lon2 - lon1)
-    a = math.sin(dLat / 2) ** 2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dLon / 2) ** 2
+    a = (
+        math.sin(dLat / 2) ** 2
+        + math.cos(math.radians(lat1))
+        * math.cos(math.radians(lat2))
+        * math.sin(dLon / 2) ** 2
+    )
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
     return R * c
 
-def validate_gps_and_teleportation(db: Session, vehicle_id: str, lat: float, lon: float, timestamp: datetime):
+
+def validate_gps_and_teleportation(
+    db: Session, vehicle_id: str, lat: float, lon: float, timestamp: datetime
+):
     # Bounds Check
     if not (-90.0 <= lat <= 90.0) or not (-180.0 <= lon <= 180.0):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Out-of-bounds GPS coordinates.")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Out-of-bounds GPS coordinates.",
+        )
     # Null Island Check
     if lat == 0.0 and lon == 0.0:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Null Island (0,0) is not allowed.")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Null Island (0,0) is not allowed.",
+        )
 
     # Teleportation Check
-    last_report = db.query(models.Report).filter(models.Report.vehicle_id == vehicle_id).order_by(models.Report.timestamp.desc()).first()
+    last_report = (
+        db.query(models.Report)
+        .filter(models.Report.vehicle_id == vehicle_id)
+        .order_by(models.Report.timestamp.desc())
+        .first()
+    )
     if last_report:
-        time_diff_hours = abs((timestamp - last_report.timestamp).total_seconds()) / 3600.0
+        time_diff_hours = (
+            abs((timestamp - last_report.timestamp).total_seconds()) / 3600.0
+        )
         if time_diff_hours > 0:
-            distance_km = haversine(last_report.latitude, last_report.longitude, lat, lon)
+            distance_km = haversine(
+                last_report.latitude, last_report.longitude, lat, lon
+            )
             speed_kmh = distance_km / time_diff_hours
             if speed_kmh > 300.0:
-                raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"Teleportation detected: Implied speed {speed_kmh:.1f} km/h exceeds 300 km/h limit.")
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Teleportation detected: Implied speed {speed_kmh:.1f} km/h exceeds 300 km/h limit.",
+                )
 
 
 @app.post(
@@ -447,7 +476,9 @@ def create_report(
     current_user: models.User = Depends(auth.RoleChecker(["fleet", "admin"])),
 ):
     # 0. Validate GPS and Teleportation
-    validate_gps_and_teleportation(db, payload.vehicle_id, payload.gps.lat, payload.gps.lon, payload.timestamp)
+    validate_gps_and_teleportation(
+        db, payload.vehicle_id, payload.gps.lat, payload.gps.lon, payload.timestamp
+    )
 
     # 1. Determine Report ID
     report_id = payload.report_id or str(uuid.uuid4())
@@ -611,10 +642,9 @@ async def detect_image(
     # B3-4: resolve model_version — prefer what the inference service reports,
     # fall back to the active registry entry so the field is never NULL when a
     # model is registered.
-    resolved_model_version = (
-        inference_data.get("model_version")
-        or get_active_model_version(db)
-    )
+    resolved_model_version = inference_data.get(
+        "model_version"
+    ) or get_active_model_version(db)
 
     db_report = models.Report(
         id=report_id,
@@ -666,16 +696,20 @@ async def detect_image(
 
     # B3-1: Update vehicle last_seen so camera health reflects telemetry cadence
     vehicle_rec = (
-        db.query(models.Vehicle)
-        .filter(models.Vehicle.plate == vehicle_id)
-        .first()
+        db.query(models.Vehicle).filter(models.Vehicle.plate == vehicle_id).first()
     )
     if vehicle_rec:
         vehicle_rec.last_seen = db_report.timestamp
         db.commit()
 
     if background_tasks:
-        background_tasks.add_task(enrich_report, db_report.id, db_report.latitude, db_report.longitude, db_report.timestamp)
+        background_tasks.add_task(
+            enrich_report,
+            db_report.id,
+            db_report.latitude,
+            db_report.longitude,
+            db_report.timestamp,
+        )
 
     return db_report
 
@@ -818,9 +852,7 @@ def verify_reports(
         )
     # B3-2: notify after commit — rate-limiter in service handles bursts
     for issue in new_high_issues:
-        notification_service.trigger_high_severity_notification(
-            issue, db, redis_client
-        )
+        notification_service.trigger_high_severity_notification(issue, db, redis_client)
     if new_high_issues:
         db.commit()  # persist in-app notification rows
     clear_all_caches()
@@ -872,15 +904,17 @@ def get_system_health(
     current_user: models.User = Depends(auth.RoleChecker(["admin"])),
 ):
     # ── Real system metrics via psutil ─────────────────────────────────────
-    cpu_pct = psutil.cpu_percent(interval=0.2)  # 200 ms sample — fast enough for a dashboard
+    cpu_pct = psutil.cpu_percent(
+        interval=0.2
+    )  # 200 ms sample — fast enough for a dashboard
     mem = psutil.virtual_memory()
     disk = psutil.disk_usage("/")
 
     # ── DB connection pool stats ────────────────────────────────────────────
     try:
         pool = engine.pool
-        db_checked_out = pool.checkedout()   # connections currently in use
-        db_pool_size = pool.size()           # configured pool ceiling
+        db_checked_out = pool.checkedout()  # connections currently in use
+        db_pool_size = pool.size()  # configured pool ceiling
     except Exception:
         db_checked_out = -1
         db_pool_size = -1
@@ -892,7 +926,9 @@ def get_system_health(
         t0 = datetime.utcnow()
         resp = httpx.get(f"{INFERENCE_URL}/health", timeout=2.0)
         latency = (datetime.utcnow() - t0).total_seconds() * 1000
-        inference_status = "ok" if resp.status_code == 200 else f"http_{resp.status_code}"
+        inference_status = (
+            "ok" if resp.status_code == 200 else f"http_{resp.status_code}"
+        )
         inference_latency_ms = round(latency, 1)
     except httpx.RequestError:
         pass  # leave defaults — unreachable / None

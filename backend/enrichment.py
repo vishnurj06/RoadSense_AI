@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 
 OPENWEATHER_API_KEY = os.getenv("OPENWEATHER_API_KEY", "")
 
+
 def fetch_nominatim(lat: float, lon: float) -> str | None:
     from main import get_cache, set_cache
 
@@ -32,11 +33,12 @@ def fetch_nominatim(lat: float, lon: float) -> str | None:
                 data = resp.json()
                 road_name = data.get("address", {}).get("road")
                 if road_name:
-                    set_cache(cache_key, road_name, expire=86400) # cache for 1 day
+                    set_cache(cache_key, road_name, expire=86400)  # cache for 1 day
                     return road_name
     except Exception as e:
         logger.error(f"Nominatim enrichment failed: {e}")
     return None
+
 
 def fetch_weather(lat: float, lon: float, timestamp: datetime) -> dict | None:
     from main import get_cache, set_cache
@@ -62,14 +64,17 @@ def fetch_weather(lat: float, lon: float, timestamp: datetime) -> dict | None:
             if resp.status_code == 200:
                 data = resp.json()
                 weather_info = {
-                    "condition": data["weather"][0]["main"] if data.get("weather") else "Unknown",
-                    "temperature": data.get("main", {}).get("temp")
+                    "condition": data["weather"][0]["main"]
+                    if data.get("weather")
+                    else "Unknown",
+                    "temperature": data.get("main", {}).get("temp"),
                 }
                 set_cache(cache_key, weather_info, expire=3600)
                 return weather_info
     except Exception as e:
         logger.error(f"OpenWeather enrichment failed: {e}")
     return None
+
 
 def enrich_report(report_id: str, lat: float, lon: float, timestamp: datetime):
     road_name = fetch_nominatim(lat, lon)
@@ -78,7 +83,9 @@ def enrich_report(report_id: str, lat: float, lon: float, timestamp: datetime):
     if road_name or weather:
         try:
             db = SessionLocal()
-            report = db.query(models.Report).filter(models.Report.id == report_id).first()
+            report = (
+                db.query(models.Report).filter(models.Report.id == report_id).first()
+            )
             if report:
                 if road_name:
                     report.road_name = road_name
