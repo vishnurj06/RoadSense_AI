@@ -7,7 +7,24 @@
  *    store + display, never 500. A ships new classes incrementally.
  *  - This file is the SINGLE source of truth for display labels and colours.
  *    Add new classes here when A ships them; the UI auto-adopts everywhere.
+ *
+ * ── Why class badges are colourless ─────────────────────────────────────────
+ * They used to be: pothole=red, road_crack=orange, broken_road=amber… Those are
+ * the same hue families severity uses, and the two badges sit side by side in
+ * the same popup row — a red "Pothole" chip next to a red "HIGH" chip.
+ *
+ * This was measured, not guessed. Against the status palette, 6 of the 8
+ * documented categorical hues sit below the ΔE 15 normal-vision floor:
+ *   green 9.7 · aqua 9.8 · magenta 9.0 · yellow 9.0 · red 7.2 · orange 6.8
+ * Only blue (30.4) and violet (24.5) are clear.
+ *
+ * So hue is spent on ONE job: severity. Class identity is carried by its label
+ * (which is already spelled out) and, where identity genuinely is the subject —
+ * the class-distribution chart — by `getClassColor` below, in a chart that
+ * contains no severity colour and direct-labels every segment.
  */
+
+import { CATEGORICAL, CATEGORICAL_OTHER } from "@/lib/theme";
 
 /** All 7 PRD detection classes (Contract v3). */
 export const KNOWN_CLASSES = new Set([
@@ -20,6 +37,9 @@ export const KNOWN_CLASSES = new Set([
   "speed_breaker",
 ]);
 
+/** Normalise any raw class string from the AI. */
+const norm = (cls) => (typeof cls === "string" ? cls.trim().toLowerCase() : "");
+
 /**
  * Human-readable display label for a raw class string from the AI.
  * Unknown classes are title-cased from their snake_case form.
@@ -29,7 +49,7 @@ export const KNOWN_CLASSES = new Set([
  */
 export function getClassLabel(cls) {
   if (!cls || typeof cls !== "string") return "Unknown";
-  const normalized = cls.trim().toLowerCase();
+  const normalized = norm(cls);
   const labelMap = {
     pothole: "Pothole",
     road_crack: "Road Crack",
@@ -50,33 +70,50 @@ export function getClassLabel(cls) {
 }
 
 /**
- * Tailwind className string for the class badge.
- * Known classes get a branded colour; unknown classes get a neutral grey
- * so they are visibly different without crashing.
+ * Fixed categorical slot per class — CHARTS ONLY.
+ *
+ * Colour follows the ENTITY, never its rank: `pothole` is slot 1 whether it is
+ * the largest segment or filtered down to nothing. That is what stops a filter
+ * from repainting the survivors.
+ *
+ * Slot order is derived (not taste): all 8! orderings of the documented hues
+ * were enumerated and the one maximising the minimum adjacent CVD ΔE kept —
+ * worst adjacent 8.4 protan / 8.7 tritan / 19.3 normal-vision on surface
+ * #0E1116. 8.4 is in the floor band, so callers MUST also direct-label.
+ *
+ * Never generate a 9th hue: unknown classes fold into the neutral `other`.
+ *
+ * @param {string} cls
+ * @returns {string} hex
+ */
+export function getClassColor(cls) {
+  const order = [
+    "pothole",
+    "road_crack",
+    "broken_road",
+    "water_filled_pothole",
+    "patch_repair",
+    "road_edge_damage",
+    "speed_breaker",
+  ];
+  const i = order.indexOf(norm(cls));
+  return i === -1 ? CATEGORICAL_OTHER : CATEGORICAL[i];
+}
+
+/**
+ * Tailwind className for the class badge — deliberately NEUTRAL (see header).
+ *
+ * Known and unknown are still told apart, but by *border treatment* rather than
+ * hue: an unrecognised class gets a dashed edge and muted ink, so a future
+ * `speed_breaker` is visibly "new" without borrowing severity's colour.
  *
  * @param {string} cls - Raw class string from the AI
  * @returns {string} Tailwind className string
  */
 export function getClassBadgeStyle(cls) {
-  const normalized = (cls || "").trim().toLowerCase();
-  const styleMap = {
-    pothole:
-      "bg-red-500/10 text-red-400 border-red-500/30",
-    road_crack:
-      "bg-orange-500/10 text-orange-400 border-orange-500/30",
-    broken_road:
-      "bg-amber-500/10 text-amber-400 border-amber-500/30",
-    water_filled_pothole:
-      "bg-blue-500/10 text-blue-400 border-blue-500/30",
-    patch_repair:
-      "bg-green-500/10 text-green-400 border-green-500/30",
-    road_edge_damage:
-      "bg-purple-500/10 text-purple-400 border-purple-500/30",
-    speed_breaker:
-      "bg-teal-500/10 text-teal-400 border-teal-500/30",
-  };
-  // Forward-compatible unknown class → neutral grey, clearly marked
-  return styleMap[normalized] || "bg-slate-700/30 text-slate-400 border-slate-600/40";
+  return isKnownClass(cls)
+    ? "bg-raised text-ink-2 border-line"
+    : "bg-raised text-ink-3 border-line border-dashed";
 }
 
 /**
@@ -87,7 +124,7 @@ export function getClassBadgeStyle(cls) {
  * @returns {boolean}
  */
 export function isKnownClass(cls) {
-  return KNOWN_CLASSES.has((cls || "").trim().toLowerCase());
+  return KNOWN_CLASSES.has(norm(cls));
 }
 
 /**
@@ -107,7 +144,12 @@ export function getMaxSeverity(detections) {
 }
 
 /**
- * Tailwind className string for a severity badge.
+ * Tailwind className for a severity badge.
+ *
+ * Severity is the one thing in this UI that wears hue, and it wears the
+ * RESERVED status tokens: high→critical, medium→warning, low→good. Always
+ * rendered beside its text label (and an icon in the popup), so meaning never
+ * rests on colour alone.
  *
  * @param {"high"|"medium"|"low"|string} severity
  * @returns {string}
@@ -115,35 +157,54 @@ export function getMaxSeverity(detections) {
 export function getSeverityBadgeStyle(severity) {
   switch ((severity || "low").toLowerCase()) {
     case "high":
-      return "bg-red-500/10 text-red-400 border-red-500/20";
+      return "bg-critical/12 text-critical border-critical/30";
     case "medium":
-      return "bg-orange-500/10 text-orange-400 border-orange-500/20";
+      return "bg-warning/12 text-warning border-warning/30";
     default:
-      return "bg-green-500/10 text-green-400 border-green-500/20";
+      return "bg-good/12 text-good border-good/30";
   }
 }
 
+/** The repair lifecycle, in order. `detected` is index 0. */
+export const STATUS_ORDER = [
+  "detected",
+  "verified",
+  "assigned",
+  "inspection",
+  "repair",
+  "completed",
+  "closed",
+];
+
 /**
- * Tailwind className string for an issue-status badge.
+ * Progress through the repair lifecycle, 0..1. Lets the UI show ORDER without
+ * spending hue on it — the workflow is ordinal, not good/bad, so it has no
+ * claim on the status palette.
+ *
+ * @param {string} status
+ * @returns {number}
+ */
+export function getStatusProgress(status) {
+  const i = STATUS_ORDER.indexOf((status || "detected").toLowerCase());
+  return i === -1 ? 0 : i / (STATUS_ORDER.length - 1);
+}
+
+/**
+ * Tailwind className for an issue-status badge — NEUTRAL by design.
+ *
+ * The lifecycle used to be a six-hue rainbow (emerald/indigo/amber/orange/
+ * teal/rose) for what is nominal-ordinal state, not good/bad — and half those
+ * hues collided with severity. Status colours are reserved; a workflow state
+ * has no claim on them. The label carries the meaning; `getStatusProgress`
+ * carries the order.
  *
  * @param {string} status
  * @returns {string}
  */
 export function getStatusBadgeStyle(status) {
-  switch ((status || "detected").toLowerCase()) {
-    case "verified":
-      return "bg-emerald-500/10 text-emerald-400 border-emerald-500/20";
-    case "assigned":
-      return "bg-indigo-500/10 text-indigo-400 border-indigo-500/20";
-    case "inspection":
-      return "bg-amber-500/10 text-amber-400 border-amber-500/20";
-    case "repair":
-      return "bg-orange-500/10 text-orange-400 border-orange-500/20";
-    case "completed":
-      return "bg-teal-500/10 text-teal-400 border-teal-500/20";
-    case "closed":
-      return "bg-rose-500/10 text-rose-400 border-rose-500/20";
-    default:
-      return "bg-slate-800 text-slate-400 border-slate-700";
-  }
+  const s = (status || "detected").toLowerCase();
+  // Terminal states recede; in-flight states sit at normal ink weight.
+  return s === "completed" || s === "closed"
+    ? "bg-sunken text-ink-3 border-line"
+    : "bg-raised text-ink-2 border-line";
 }

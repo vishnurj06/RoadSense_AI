@@ -3,32 +3,55 @@
 /**
  * page.js — Dashboard orchestrator (Person B · RoadSense AI · Phase 3)
  *
- * Responsibility: auth guard, data fetching, shared state.
- * All rendering is delegated to role-specific dashboard components.
- * This file must stay under ~150 lines. If it grows, extract more.
+ * Responsibility: auth guard, data fetching, shared state, and routing between
+ * views. All rendering is delegated to the shell and the views.
+ *
+ * The shell used to force EVERY section into one 400px column floating over the
+ * map, which is why reports, analytics and admin all felt cramped and left dead
+ * space. Now only MapView floats a panel — the rest are real pages.
  */
 
-import React, { useState, useEffect, useSyncExternalStore } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
-import dynamic from "next/dynamic";
-import { Activity, AlertTriangle, RefreshCw } from "lucide-react";
+import { motion, AnimatePresence, MotionConfig } from "motion/react";
+import {
+  Map as MapIcon,
+  Table2,
+  BarChart3,
+  Car,
+  Shield,
+  ListChecks,
+  RefreshCw,
+  Satellite,
+  Layers,
+} from "lucide-react";
 
-import StatCards from "@/components/shared/StatCards";
+import dynamic from "next/dynamic";
+import Sidebar from "@/components/shell/Sidebar";
+import PageHeader from "@/components/shell/PageHeader";
+import CommandPalette from "@/components/shell/CommandPalette";
 import Toast from "@/components/shared/Toast";
-import AuthorityDashboard from "@/components/dashboards/AuthorityDashboard";
-import FleetDashboard from "@/components/dashboards/FleetDashboard";
-import AdminDashboard from "@/components/dashboards/AdminDashboard";
+import MapView from "@/components/views/MapView";
+import QueueView from "@/components/views/QueueView";
+import ReportsView from "@/components/views/ReportsView";
+import AnalyticsView from "@/components/views/AnalyticsView";
+import FleetView from "@/components/views/FleetView";
+import AdminView from "@/components/views/AdminView";
+import { VehicleHistoryDrawer } from "@/components/dashboards/FleetDashboard";
 import { getMaxSeverity } from "@/lib/classUtils";
 import { isRealGps } from "@/lib/gpsUtils";
 import { mapFeaturesToIssues } from "@/lib/mapUtils";
+import { IconButton } from "@/components/ui/Primitives";
+import { T } from "@/lib/motion";
 
-// Leaflet map — SSR disabled (window is not defined on server)
+// Leaflet map — SSR disabled (window is not defined on server). Mounted once,
+// at the back, for the whole session.
 const MapComponent = dynamic(() => import("@/components/MapComponent"), {
   ssr: false,
   loading: () => (
-    <div className="w-full h-full rounded-2xl bg-slate-900 border border-slate-800 flex flex-col items-center justify-center text-slate-400 gap-3">
-      <RefreshCw className="animate-spin h-8 w-8 text-blue-500" />
-      <p className="text-sm font-medium">Loading Interactive Map...</p>
+    <div className="bg-canvas bg-grid text-ink-3 flex h-full w-full flex-col items-center justify-center gap-3">
+      <RefreshCw className="text-accent h-5 w-5 animate-spin" />
+      <p className="text-[11px] font-medium">Loading map…</p>
     </div>
   ),
 });
@@ -42,18 +65,60 @@ const BACKEND_URL = "http://localhost:8000";
  * the client — rendering user-dependent UI on the first client pass would be a
  * hydration mismatch. This reports false during SSR *and* during hydration, then
  * flips to true once mounted, matching the server output exactly when it counts.
- *
- * Previously this was `useState(false)` + `useEffect(() => setMounted(true))`,
- * which sets state synchronously inside an effect and causes the cascading
- * re-render that react-hooks/set-state-in-effect exists to prevent.
  */
 const subscribeToNothing = () => () => {};
 const useIsHydrated = () =>
   useSyncExternalStore(
     subscribeToNothing,
-    () => true,  // client snapshot — after hydration
-    () => false, // server snapshot — during SSR and hydration
+    () => true, // client snapshot — after hydration
+    () => false // server snapshot — during SSR and hydration
   );
+
+// ─── Views per role ───────────────────────────────────────────────────────────
+
+/**
+ * Views, mapped from the PRD's three dashboards.
+ *
+ *   Authority → Live map · Severity · Pending reports · Repair tracking · Analytics
+ *   Fleet     → Vehicle status · Detection history · Camera health
+ *   Admin     → User management · AI model management · System monitoring
+ *
+ * `w` is the docked panel width. Every view is a panel beside the sidebar with
+ * the map living behind it — the width is what the view needs, not a different
+ * layout. A 384px issue list and a 1020px telemetry table are the same shell.
+ */
+const VIEW = {
+  map: { label: "Live Map", icon: MapIcon, title: "Live Hazard Map", subtitle: "Real-time detections across the network", w: 384 },
+  queue: { label: "Action Queue", icon: ListChecks, title: "Pending & Repair Tracking", subtitle: "Verified issues awaiting dispatch", w: 440 },
+  reports: { label: "Report Logs", icon: Table2, title: "Report Logs", subtitle: "Raw telemetry from all vehicles", w: 1040 },
+  analytics: { label: "Analytics", icon: BarChart3, title: "Operations Analytics", subtitle: "Trend, hazard mix & road health", w: 1100 },
+  fleet: { label: "Fleet", icon: Car, title: "Fleet Registry", subtitle: "Vehicle status & camera health", w: 820 },
+  admin: { label: "Admin Panel", icon: Shield, title: "System Administration", subtitle: "Health, users & model registry", w: 1100 },
+};
+
+/**
+ * Role-derived: a fleet user never sees an admin destination at all.
+ *
+ * Scoped to the PRD's three dashboards rather than "everything for everyone":
+ *   Authority → live map, severity, pending reports, repair tracking, analytics
+ *   Fleet     → vehicle status, detection history, camera health
+ *   Admin     → user management, AI model management, system monitoring
+ *
+ * So Authority does NOT get Fleet (vehicle/camera health is the operator's
+ * concern, not the road authority's), and Fleet does NOT get Analytics.
+ * Admin is the superset by definition.
+ */
+const SECTIONS = {
+  // Live map · Severity · Pending reports · Repair tracking · Analytics
+  authority: ["map", "queue", "reports", "analytics"],
+  // Vehicle status · Detection history · Camera health
+  fleet: ["map", "fleet", "reports"],
+  // User management · AI model management · System monitoring (+ the superset)
+  admin: ["map", "queue", "reports", "analytics", "fleet", "admin"],
+};
+
+/** Each role lands on ITS dashboard, not on someone else's. */
+const HOME = { authority: "map", fleet: "fleet", admin: "map" };
 
 // ─── Filtering helpers ────────────────────────────────────────────────────────
 
@@ -100,6 +165,12 @@ export default function Dashboard() {
   const [reportPage, setReportPage] = useState(1);
   const [totalReports, setTotalReports] = useState(0);
 
+  // Fleet
+  const [vehicles, setVehicles] = useState([]);
+  const [vehiclesLoading, setVehiclesLoading] = useState(true);
+  const [vehiclesError, setVehiclesError] = useState(null);
+  const [selectedVehicle, setSelectedVehicle] = useState(null);
+
   // Admin-only extras
   const [adminUsers, setAdminUsers] = useState([]);
   const [systemHealth, setSystemHealth] = useState(null);
@@ -109,6 +180,15 @@ export default function Dashboard() {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState(null);
   const [toast, setToast] = useState(null);
+  /**
+   * `null` until the user actually picks something. The role's home view is
+   * DERIVED below rather than written by an effect — an effect that setState's
+   * a default triggers a cascading render and, worse, fights the user's own
+   * navigation on every subsequent render.
+   */
+  const [pickedView, setView] = useState(null);
+  const [navCollapsed, setNavCollapsed] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
 
   // Filters
   const [severityFilter, setSeverityFilter] = useState({ high: true, medium: true, low: true });
@@ -125,9 +205,7 @@ export default function Dashboard() {
 
   // Deliberately performs no *synchronous* setState — every write happens after
   // an await — so the mount effect can call it directly without cascading
-  // renders (react-hooks/set-state-in-effect). `loading` starts true for the
-  // initial load. User-initiated refreshes go through refresh() below to get the
-  // spinner immediately; setState is unrestricted inside an event handler.
+  // renders (react-hooks/set-state-in-effect).
   const fetchData = async (currentUser = null, targetPage = null) => {
     try {
       const activeUser = currentUser || user;
@@ -174,16 +252,15 @@ export default function Dashboard() {
       }
     } catch (err) {
       console.error(err);
-      setError("Backend offline. Ensure the FastAPI server is running on http://localhost:8000.");
+      setError("Backend offline. Ensure FastAPI is running on http://localhost:8000.");
     } finally {
       setLoading(false);
     }
   };
 
   /**
-   * User-initiated refresh: raise the spinner immediately, then refetch. Safe to
-   * setState here because this only ever runs from an event handler, never from
-   * an effect.
+   * User-initiated refresh. Does NOT clear existing data: a refetch holds the
+   * previous render rather than flashing skeletons, so the layout never jumps.
    */
   const refresh = (targetPage = null) => {
     setLoading(true);
@@ -191,19 +268,58 @@ export default function Dashboard() {
     return fetchData(null, targetPage);
   };
 
+  // `vehiclesLoading` starts true and is never re-raised: the 60 s poll must
+  // update in place. Re-raising it blanked the registry every minute.
+  const fetchVehicles = useCallback(async () => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/fleet/vehicles?limit=100`, {
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      setVehicles(data.vehicles || []);
+      setVehiclesError(null);
+    } catch (err) {
+      setVehiclesError(err.message);
+    } finally {
+      setVehiclesLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
-    if (!user) { router.push("/login"); return; }
-    // Async work, not a synchronous call: fetchData is await-first, so nothing
-    // is written to state during the effect itself.
-    (async () => { await fetchData(user); })();
+    if (!user) {
+      router.push("/login");
+      return;
+    }
+    (async () => {
+      await fetchData(user);
+      await fetchVehicles();
+    })();
+    const id = setInterval(fetchVehicles, 60_000);
+    return () => clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ⌘K / Ctrl-K
+  useEffect(() => {
+    const onKey = (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setPaletteOpen((o) => !o);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   }, []);
 
   // ── Handlers ────────────────────────────────────────────────────────────────
 
   const handleLogout = async () => {
-    try { await fetch(`${BACKEND_URL}/auth/logout`, { method: "POST", credentials: "include" }); }
-    catch (e) { console.error("Logout failed:", e); }
+    try {
+      await fetch(`${BACKEND_URL}/auth/logout`, { method: "POST", credentials: "include" });
+    } catch (e) {
+      console.error("Logout failed:", e);
+    }
     localStorage.removeItem("user");
     router.push("/login");
   };
@@ -216,9 +332,16 @@ export default function Dashboard() {
         body: JSON.stringify({ issue_id: issueId, status: nextStatus }),
         credentials: "include",
       });
-      if (res.ok) { showToast(`Issue updated → ${nextStatus}`, "success"); refresh(); }
-      else { const e = await res.json(); showToast(e.detail || "Failed to update", "error"); }
-    } catch { showToast("Connection error", "error"); }
+      if (res.ok) {
+        showToast(`Issue updated → ${nextStatus}`, "success");
+        refresh();
+      } else {
+        const e = await res.json();
+        showToast(e.detail || "Failed to update", "error");
+      }
+    } catch {
+      showToast("Connection error", "error");
+    }
   };
 
   const handleUserRoleToggle = async (userId, newRole) => {
@@ -229,9 +352,16 @@ export default function Dashboard() {
         body: JSON.stringify({ user_id: userId, role: newRole }),
         credentials: "include",
       });
-      if (res.ok) { showToast(`Role updated → ${newRole}`, "success"); refresh(); }
-      else { const e = await res.json(); showToast(e.detail || "Failed to update role", "error"); }
-    } catch { showToast("Connection error", "error"); }
+      if (res.ok) {
+        showToast(`Role updated → ${newRole}`, "success");
+        refresh();
+      } else {
+        const e = await res.json();
+        showToast(e.detail || "Failed to update role", "error");
+      }
+    } catch {
+      showToast("Connection error", "error");
+    }
   };
 
   const handleImageUpload = async (e) => {
@@ -249,143 +379,249 @@ export default function Dashboard() {
       formData.append("vehicle_id", "demo-web-upload");
       formData.append("speed_kmph", String(Math.round(20 + Math.random() * 50)));
       const res = await fetch(`${BACKEND_URL}/detect-image`, {
-        method: "POST", body: formData, credentials: "include",
+        method: "POST",
+        body: formData,
+        credentials: "include",
       });
-      if (res.status === 401) { localStorage.removeItem("user"); router.push("/login"); return; }
-      if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.detail || "Image analysis failed."); }
+      if (res.status === 401) {
+        localStorage.removeItem("user");
+        router.push("/login");
+        return;
+      }
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || "Image analysis failed.");
+      }
       const data = await res.json();
       await refresh();
       showToast(
         data.detections?.length > 0
-          ? `Analyzed: Found ${data.detections.length} hazard(s)!`
-          : "Analyzed: No hazards detected.",
+          ? `Analysed: found ${data.detections.length} hazard(s)`
+          : "Analysed: no hazards detected",
         "success"
       );
     } catch (err) {
       showToast(err.message, "error");
       setError(err.message);
-    } finally { setUploading(false); }
+    } finally {
+      setUploading(false);
+    }
   };
 
-  // ── Derived data ─────────────────────────────────────────────────────────────
+  // ── Derived ──────────────────────────────────────────────────────────────────
 
   const filteredReports = applyFilters(reports, severityFilter, classFilter, statusFilter, realGpsOnly);
-  const filteredIssues  = applyFilters(mapIssues, severityFilter, classFilter, statusFilter, realGpsOnly);
+  const filteredIssues = applyFilters(mapIssues, severityFilter, classFilter, statusFilter, realGpsOnly);
+
+  const role = mounted ? user?.role : undefined;
+  // Each role lands on ITS dashboard. Derived, never written: before hydration
+  // this is "map" on both server and client, so it can't mismatch.
+  const view = pickedView ?? (role ? HOME[role] || "map" : "map");
+  const ids = SECTIONS[role] || [];
+  const sections = ids.map((id) => ({ id, ...VIEW[id] }));
+  const meta = VIEW[view] || VIEW.map;
 
   const filterProps = {
-    severityFilter, setSeverityFilter,
-    classFilter, setClassFilter,
-    statusFilter, setStatusFilter,
-    realGpsOnly, setRealGpsOnly,
+    severityFilter,
+    setSeverityFilter,
+    classFilter,
+    setClassFilter,
+    statusFilter,
+    setStatusFilter,
+    realGpsOnly,
+    setRealGpsOnly,
   };
 
-  // ── Render ───────────────────────────────────────────────────────────────────
+  const commands = useMemo(() => {
+    const nav = sections.map((s) => ({
+      id: `nav-${s.id}`,
+      group: "Navigate",
+      label: s.label,
+      icon: s.icon,
+      run: () => setView(s.id),
+    }));
+    const actions = [
+      { id: "act-refresh", group: "Actions", label: "Refresh data", icon: RefreshCw, run: () => refresh() },
+      {
+        id: "act-gps",
+        group: "Actions",
+        label: realGpsOnly ? "Show all GPS sources" : "Show real GPS only",
+        icon: Satellite,
+        run: () => setRealGpsOnly((v) => !v),
+      },
+      {
+        id: "act-choropleth",
+        group: "Actions",
+        label: showRoadHealth ? "Hide road-health choropleth" : "Show road-health choropleth",
+        icon: Layers,
+        run: () => {
+          setShowRoadHealth((v) => !v);
+          setView("map");
+        },
+      },
+    ];
+    return [...nav, ...actions];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sections, realGpsOnly, showRoadHealth]);
 
   return (
-    <div className="flex flex-col h-screen w-screen bg-slate-950 text-slate-100 overflow-hidden font-sans">
-      {/* ── Navbar ── */}
-      <header className="flex items-center justify-between px-6 py-4 bg-slate-900/60 backdrop-blur-md border-b border-slate-800 shrink-0">
-        <div className="flex items-center gap-3">
-          <div className="bg-gradient-to-tr from-blue-600 to-indigo-500 p-2.5 rounded-xl shadow-lg shadow-blue-500/20">
-            <Activity className="h-6 w-6 text-white" />
-          </div>
-          <div>
-            <h1 className="text-xl font-bold tracking-tight bg-gradient-to-r from-white via-slate-200 to-slate-400 bg-clip-text text-transparent">
-              RoadSense AI
-            </h1>
-            <p className="text-[10px] font-semibold text-blue-400 uppercase tracking-widest">
-              Road Condition Dashboard
-            </p>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-4">
-          {error && (
-            <div className="hidden md:flex items-center gap-2 bg-red-950/40 border border-red-500/30 text-red-400 text-xs px-3 py-1.5 rounded-lg">
-              <AlertTriangle className="h-4 w-4 shrink-0" />
-              <span>{error}</span>
-            </div>
-          )}
-          {mounted && user && (
-            <div className="flex items-center gap-3 bg-slate-900 border border-slate-800/80 px-3 py-1.5 rounded-xl">
-              <div className="flex flex-col text-right">
-                <span className="text-[10px] font-bold text-slate-200">{user.username}</span>
-                <span className="text-[8px] uppercase tracking-wider font-semibold text-slate-500">{user.role}</span>
-              </div>
-              <div className="h-4 w-px bg-slate-800/60" />
-              <button
-                onClick={handleLogout}
-                className="text-[10px] font-extrabold text-red-400 hover:text-red-300 transition duration-150 cursor-pointer"
-              >
-                Log Out
-              </button>
-            </div>
-          )}
-          <button
-            onClick={() => refresh()}
-            disabled={loading}
-            className="flex items-center gap-2 px-3 py-2 text-xs font-semibold bg-slate-800 hover:bg-slate-700 border border-slate-700/60 rounded-xl transition cursor-pointer disabled:opacity-50"
-          >
-            <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin text-blue-500" : ""}`} />
-            Refresh
-          </button>
-        </div>
-      </header>
-
-      {/* ── Body ── */}
-      <div className="flex flex-1 overflow-hidden p-6 gap-6">
-        {/* Sidebar */}
-        <div className="w-[32rem] flex flex-col gap-5 shrink-0 overflow-y-auto custom-scrollbar pr-1">
-          <StatCards analytics={analytics} />
-
-          {mounted && user?.role === "authority" && (
-            <AuthorityDashboard
-              analytics={analytics}
-              mapIssues={mapIssues}
-              onQuickAction={handleQuickAction}
-              roadHealthSegments={roadHealthSegments}
-              showRoadHealth={showRoadHealth}
-              setShowRoadHealth={setShowRoadHealth}
-              {...filterProps}
-            />
-          )}
-
-          {mounted && user?.role === "fleet" && (
-            <FleetDashboard
-              reports={reports}
-              filteredReports={filteredReports}
-              totalReports={totalReports}
-              reportPage={reportPage}
-              onPageChange={(p) => refresh(p)}
-              onUpload={handleImageUpload}
-              uploading={uploading}
-              {...filterProps}
-            />
-          )}
-
-          {mounted && user?.role === "admin" && (
-            <AdminDashboard
-              adminUsers={adminUsers}
-              systemHealth={systemHealth}
-              onRoleChange={handleUserRoleToggle}
-              onUpload={handleImageUpload}
-              uploading={uploading}
-            />
-          )}
-        </div>
-
-        {/* Map */}
-        <div className="flex-1 h-full min-w-0 relative">
-          <MapComponent
-            reports={filteredIssues}
-            onRefresh={() => refresh()}
-            roadHealthSegments={roadHealthSegments}
-            showRoadHealth={showRoadHealth}
+    <MotionConfig reducedMotion="user">
+      <div className="bg-canvas text-ink flex h-screen w-screen overflow-hidden">
+        {mounted && user && (
+          <Sidebar
+            sections={sections}
+            active={view}
+            onSelect={setView}
+            user={user}
+            onLogout={handleLogout}
+            collapsed={navCollapsed}
+            onToggle={() => setNavCollapsed((c) => !c)}
           />
-        </div>
-      </div>
+        )}
 
-      <Toast toast={toast} />
-    </div>
+        <div className="flex min-w-0 flex-1 flex-col">
+          <PageHeader
+            title={meta.title}
+            subtitle={meta.subtitle}
+            error={error}
+            loading={loading}
+            onRefresh={() => refresh()}
+            onOpenPalette={() => setPaletteOpen(true)}
+          />
+
+          {/*
+           * The map is a PERSISTENT canvas, not one destination among five.
+           *
+           * Views used to swap the whole page, which threw the map away and
+           * rebuilt it on every return — losing pan/zoom and any sense of
+           * place. Now the canvas stays mounted underneath and every other
+           * view rises IN FRONT of it as an elevated sheet: the map breathes
+           * at the edges, the app reads as one surface with depth rather than
+           * a stack of unrelated pages, and coming back to the map is instant
+           * because it never left.
+           */}
+          <div className="relative min-h-0 flex-1">
+            {/*
+             * `isolate` is load-bearing, not decoration.
+             *
+             * Leaflet gives its own panes z-index 200–700 and its controls
+             * 800–1000. This wrapper is `absolute` with z-index:auto, which
+             * does NOT create a stacking context — so without `isolate` those
+             * values compete directly with the overlaying panels in the SAME
+             * context, the map wins, and the entire UI renders underneath the
+             * tiles: invisible, and eating every click.
+             */}
+            <div className="absolute inset-0 isolate z-0">
+              <MapComponent
+                reports={filteredIssues}
+                onRefresh={() => refresh()}
+                roadHealthSegments={roadHealthSegments}
+                showRoadHealth={showRoadHealth}
+              />
+            </div>
+
+            {/*
+             * ONE shell for every view: a panel docked beside the sidebar,
+             * with the map living behind and to the right of it.
+             *
+             * This replaced a full-page swap, which was a regression I was told
+             * about and argued past: switching to Report Logs threw the whole
+             * canvas away and read as landing on an unrelated site. Docking
+             * every view keeps the product in one place — the map is always
+             * there, the panel is what changes — and the width simply grows to
+             * what the content needs (384px issue list → 1040px telemetry
+             * table) instead of the layout changing shape.
+             */}
+            <AnimatePresence mode="wait">
+              <motion.aside
+                key={view}
+                initial={{ x: -22, opacity: 0, scale: 0.99 }}
+                animate={{ x: 0, opacity: 1, scale: 1 }}
+                exit={{ x: -14, opacity: 0, scale: 0.995 }}
+                transition={T.base}
+                style={{ width: `min(${meta.w}px, calc(100vw - ${navCollapsed ? 68 : 236}px - 96px))` }}
+                className="absolute inset-y-0 left-0 z-20 p-3"
+              >
+                <div className="border-line bg-canvas/90 flex h-full flex-col overflow-hidden rounded-2xl border shadow-[0_32px_80px_-16px_rgba(0,0,0,0.9)] backdrop-blur-2xl">
+                  {view === "map" && (
+                    <MapView
+                      filteredIssues={filteredIssues}
+                      onQuickAction={handleQuickAction}
+                      filterProps={filterProps}
+                    />
+                  )}
+
+                  {view === "queue" && (
+                    <QueueView issues={mapIssues} onQuickAction={handleQuickAction} />
+                  )}
+
+                  {view === "reports" && (
+                    <ReportsView
+                      reports={filteredReports}
+                      totalReports={totalReports}
+                      reportPage={reportPage}
+                      onPageChange={(p) => refresh(p)}
+                      filterProps={filterProps}
+                    />
+                  )}
+
+                  {view === "analytics" && (
+                    <AnalyticsView analytics={analytics} roadHealthSegments={roadHealthSegments} />
+                  )}
+
+                  {view === "fleet" && (
+                    <FleetView
+                      vehicles={vehicles}
+                      loading={vehiclesLoading}
+                      error={vehiclesError}
+                      onSelect={setSelectedVehicle}
+                      onUpload={handleImageUpload}
+                      uploading={uploading}
+                    />
+                  )}
+
+                  {view === "admin" && (
+                    <AdminView
+                      adminUsers={adminUsers}
+                      systemHealth={systemHealth}
+                      onRoleChange={handleUserRoleToggle}
+                      onUpload={handleImageUpload}
+                      uploading={uploading}
+                    />
+                  )}
+                </div>
+              </motion.aside>
+            </AnimatePresence>
+
+            {/* Canvas controls sit clear of the panel, on the map itself. */}
+            <div className="absolute top-3 right-3 z-30 flex gap-2">
+              <IconButton
+                icon={Layers}
+                label={showRoadHealth ? "Hide road-health choropleth" : "Show road-health choropleth"}
+                onClick={() => setShowRoadHealth((v) => !v)}
+                active={showRoadHealth}
+                className="bg-surface/80 h-8 w-8 backdrop-blur-xl"
+              />
+            </div>
+          </div>
+        </div>
+
+        <AnimatePresence>
+          {selectedVehicle && (
+            <VehicleHistoryDrawer
+              vehicle={selectedVehicle}
+              onClose={() => setSelectedVehicle(null)}
+            />
+          )}
+        </AnimatePresence>
+
+        <CommandPalette
+          open={paletteOpen}
+          onClose={() => setPaletteOpen(false)}
+          commands={commands}
+        />
+        <Toast toast={toast} />
+      </div>
+    </MotionConfig>
   );
 }

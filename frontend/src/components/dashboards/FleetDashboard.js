@@ -1,36 +1,37 @@
 "use client";
 
 import React, { useState, useEffect, useCallback } from "react";
+import { motion, AnimatePresence } from "motion/react";
 import { Car, Camera, Wifi, WifiOff, Clock, ChevronRight, X } from "lucide-react";
-import Filters from "@/components/shared/Filters";
-import UploadPanel from "@/components/shared/UploadPanel";
-import ReportLogs from "@/components/shared/ReportLogs";
-import { getMaxSeverity, getSeverityBadgeStyle } from "@/lib/classUtils";
+import Panel from "@/components/ui/Panel";
+import { SeverityBadge, EmptyState, Skeleton, Chip } from "@/components/ui/Primitives";
+import { stagger, rowIn, drawer, fade, T } from "@/lib/motion";
 
 const BACKEND_URL = "http://localhost:8000";
 
-// ── Camera health badge ───────────────────────────────────────────────────────
+/* ── Camera health ───────────────────────────────────────────────────────────
+   Camera health is a STATE, so it wears the reserved status tokens and always
+   ships a text label beside the dot — never colour alone. `stale` breathes
+   because it is the one value that is actively decaying.                     */
 
 const HEALTH_STYLES = {
-  online:  { dot: "bg-green-500",  label: "text-green-400",  text: "Online" },
-  stale:   { dot: "bg-amber-400 animate-pulse", label: "text-amber-400", text: "Stale" },
-  offline: { dot: "bg-red-500",    label: "text-red-400",    text: "Offline" },
-  unknown: { dot: "bg-slate-600",  label: "text-slate-500",  text: "No data" },
+  online: { dot: "bg-good", label: "text-good", text: "Online" },
+  stale: { dot: "bg-warning animate-breathe", label: "text-warning", text: "Stale" },
+  offline: { dot: "bg-critical", label: "text-critical", text: "Offline" },
+  unknown: { dot: "bg-ink-3", label: "text-ink-3", text: "No data" },
 };
 
 function CameraHealthBadge({ health }) {
   const s = HEALTH_STYLES[health] || HEALTH_STYLES.unknown;
   return (
     <span className="flex items-center gap-1.5">
-      <span className={`w-2 h-2 rounded-full shrink-0 ${s.dot}`} />
-      <span className={`text-[10px] font-bold uppercase tracking-wide ${s.label}`}>
-        {s.text}
-      </span>
+      <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${s.dot}`} aria-hidden="true" />
+      <span className={`text-[10px] font-medium ${s.label}`}>{s.text}</span>
     </span>
   );
 }
 
-// ── Vehicle history drawer ────────────────────────────────────────────────────
+/* ── Vehicle history drawer ─────────────────────────────────────────────── */
 
 function VehicleHistoryDrawer({ vehicle, onClose }) {
   const [history, setHistory] = useState(null);
@@ -43,328 +44,265 @@ function VehicleHistoryDrawer({ vehicle, onClose }) {
   // triggering cascading renders (react-hooks/set-state-in-effect). `loading`
   // already starts true for the initial load; the pagination handlers raise it
   // themselves, which is fine — the restriction only applies inside effects.
-  const fetchHistory = useCallback(async (p = 1) => {
-    try {
-      const res = await fetch(
-        `${BACKEND_URL}/fleet/vehicles/${vehicle.id}/history?page=${p}&limit=10`,
-        { credentials: "include" }
-      );
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      setHistory(data);
-      setPage(p);
-      setError(null);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  }, [vehicle.id]);
+  const fetchHistory = useCallback(
+    async (p = 1) => {
+      try {
+        const res = await fetch(
+          `${BACKEND_URL}/fleet/vehicles/${vehicle.id}/history?page=${p}&limit=10`,
+          { credentials: "include" }
+        );
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        setHistory(data);
+        setPage(p);
+        setError(null);
+      } catch (err) {
+        setError(err.message);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [vehicle.id]
+  );
 
   useEffect(() => {
-    (async () => { await fetchHistory(1); })();
+    (async () => {
+      await fetchHistory(1);
+    })();
   }, [fetchHistory]);
 
+  // Escape closes — a drawer you can only leave by mousing to an X is a trap.
+  useEffect(() => {
+    const onKey = (e) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const pages = Math.ceil((history?.total || 0) / 10);
+
   return (
-    <div
-      className="fixed inset-0 z-50 flex justify-end"
+    <motion.div
+      className="fixed inset-0 z-[60] flex justify-end"
       data-testid="vehicle-history-drawer"
+      initial="hidden"
+      animate="show"
+      exit="exit"
     >
-      {/* Backdrop */}
-      <div
-        className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+      <motion.div
+        variants={fade}
         onClick={onClose}
+        className="absolute inset-0 bg-black/60 backdrop-blur-sm"
       />
 
-      {/* Drawer panel */}
-      <div className="relative z-10 w-[28rem] h-full bg-slate-900 border-l border-slate-800 flex flex-col shadow-2xl">
-        {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-800 shrink-0">
-          <div className="flex flex-col">
-            <span className="text-sm font-bold text-slate-100">
+      <motion.aside
+        variants={drawer}
+        className="border-line bg-surface/95 relative z-10 flex h-full w-[26rem] max-w-[92vw] flex-col border-l shadow-2xl backdrop-blur-2xl"
+      >
+        <header className="border-line flex shrink-0 items-center justify-between border-b px-4 py-3.5">
+          <div className="flex min-w-0 flex-col">
+            <span className="text-ink truncate font-mono text-[13px] font-semibold">
               {vehicle.plate}
             </span>
-            <span className="text-[10px] text-slate-500">{vehicle.model || "Unknown model"}</span>
+            <span className="text-ink-3 truncate text-[10px]">
+              {vehicle.model || "Unknown model"}
+            </span>
           </div>
           <button
+            type="button"
             onClick={onClose}
-            className="p-1.5 rounded-lg hover:bg-slate-800 transition cursor-pointer"
+            aria-label="Close"
+            className="text-ink-3 hover:text-ink hover:bg-raised cursor-pointer rounded-lg p-1.5 transition-colors"
           >
-            <X className="h-4 w-4 text-slate-400" />
+            <X className="h-4 w-4" />
           </button>
-        </div>
+        </header>
 
-        {/* Stats row */}
-        <div className="flex gap-3 px-5 py-3 border-b border-slate-800/60 shrink-0">
-          <div className="flex flex-col gap-0.5">
-            <span className="text-[9px] uppercase text-slate-500 font-bold">Camera</span>
+        <div className="border-line grid shrink-0 grid-cols-3 gap-3 border-b px-4 py-3">
+          <div className="flex flex-col gap-1">
+            <span className="eyebrow">Camera</span>
             <CameraHealthBadge health={vehicle.camera_health} />
           </div>
-          <div className="w-px bg-slate-800" />
-          <div className="flex flex-col gap-0.5">
-            <span className="text-[9px] uppercase text-slate-500 font-bold">Reports</span>
-            <span className="text-sm font-bold text-slate-200">{vehicle.report_count}</span>
+          <div className="flex flex-col gap-1">
+            <span className="eyebrow">Reports</span>
+            <span className="text-ink tnum font-mono text-[12px] font-medium">
+              {vehicle.report_count}
+            </span>
           </div>
-          {vehicle.last_seen && (
-            <>
-              <div className="w-px bg-slate-800" />
-              <div className="flex flex-col gap-0.5">
-                <span className="text-[9px] uppercase text-slate-500 font-bold">Last Seen</span>
-                <span className="text-[10px] text-slate-400">
-                  {new Date(vehicle.last_seen).toLocaleString([], {
-                    month: "short", day: "numeric",
-                    hour: "2-digit", minute: "2-digit",
-                  })}
-                </span>
-              </div>
-            </>
-          )}
+          <div className="flex min-w-0 flex-col gap-1">
+            <span className="eyebrow">Last seen</span>
+            <span className="text-ink-2 tnum truncate font-mono text-[10px]">
+              {vehicle.last_seen
+                ? new Date(vehicle.last_seen).toLocaleString([], {
+                    month: "short",
+                    day: "numeric",
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })
+                : "—"}
+            </span>
+          </div>
         </div>
 
-        {/* History list */}
-        <div className="flex-1 overflow-y-auto custom-scrollbar px-5 py-3">
+        <div className="custom-scrollbar flex-1 overflow-y-auto px-4 py-2">
           {loading && (
-            <div className="flex items-center justify-center py-10 text-slate-500 text-xs gap-2">
-              <Clock className="animate-spin h-4 w-4" /> Loading history...
+            <div className="flex flex-col gap-2 py-2">
+              {[0, 1, 2, 3].map((i) => (
+                <Skeleton key={i} className="h-12 w-full" />
+              ))}
             </div>
           )}
           {error && (
-            <p className="text-xs text-red-400 text-center py-6">Error: {error}</p>
+            <p className="text-critical py-6 text-center text-[11px]">Error: {error}</p>
           )}
           {!loading && !error && history?.reports?.length === 0 && (
-            <p className="text-xs text-slate-600 text-center py-8 italic">
-              No reports submitted by this vehicle yet.
-            </p>
+            <EmptyState icon={Camera} title="No reports from this vehicle yet" />
           )}
-          {!loading && !error && history?.reports?.map((report) => {
-            const maxSev = getMaxSeverity(report.detections);
-            return (
-              <div
-                key={report.id}
-                className="border-b border-slate-800/60 py-3 flex flex-col gap-1"
-              >
-                <div className="flex items-center justify-between">
-                  <span className="text-[10px] text-slate-500">
-                    {new Date(report.timestamp).toLocaleString([], {
-                      month: "short", day: "numeric",
-                      hour: "2-digit", minute: "2-digit",
-                    })}
-                  </span>
-                  <span
-                    className={`text-[9px] font-bold uppercase px-2 py-0.5 rounded-full border ${getSeverityBadgeStyle(maxSev)}`}
-                  >
-                    {maxSev}
-                  </span>
-                </div>
-                <div className="text-xs text-slate-400">
-                  {report.detections?.length || 0} detection(s)
-                  {report.speed_kmph != null && ` · ${report.speed_kmph} km/h`}
-                </div>
-              </div>
-            );
-          })}
+          {!loading && !error && history?.reports?.length > 0 && (
+            <motion.ul variants={stagger(0.03)} initial="hidden" animate="show">
+              {history.reports.map((report) => (
+                <motion.li
+                  key={report.id}
+                  variants={rowIn}
+                  className="border-line/60 flex items-center justify-between gap-2 border-b py-2.5 last:border-0"
+                >
+                  <div className="flex min-w-0 flex-col gap-1">
+                    <span className="text-ink-2 tnum font-mono text-[10px]">
+                      {new Date(report.timestamp).toLocaleString([], {
+                        month: "short",
+                        day: "numeric",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </span>
+                    <span className="text-ink-3 text-[10px]">
+                      {report.detections?.length || 0} detection
+                      {report.detections?.length === 1 ? "" : "s"}
+                      {report.speed_kmph != null && ` · ${report.speed_kmph} km/h`}
+                    </span>
+                  </div>
+                  <SeverityBadge detections={report.detections} />
+                </motion.li>
+              ))}
+            </motion.ul>
+          )}
         </div>
 
-        {/* Pagination footer */}
-        {history?.total > 10 && (
-          <div className="flex items-center justify-between px-5 py-3 border-t border-slate-800 shrink-0">
+        {pages > 1 && (
+          <div className="border-line flex shrink-0 items-center justify-between border-t px-4 py-3">
             <button
+              type="button"
               disabled={page === 1}
-              onClick={() => { setLoading(true); fetchHistory(page - 1); }}
-              className="text-[10px] font-bold px-3 py-1 bg-slate-800 rounded disabled:opacity-40 cursor-pointer"
+              onClick={() => {
+                setLoading(true);
+                fetchHistory(page - 1);
+              }}
+              className="bg-raised border-line text-ink-2 hover:text-ink cursor-pointer rounded-md border px-2 py-1 text-[10px] font-medium disabled:opacity-35"
             >
               Prev
             </button>
-            <span className="text-[10px] text-slate-500">
-              Page {page} of {Math.ceil(history.total / 10)}
+            <span className="text-ink-3 tnum text-[10px]">
+              {page} / {pages}
             </span>
             <button
-              disabled={page >= Math.ceil(history.total / 10)}
-              onClick={() => { setLoading(true); fetchHistory(page + 1); }}
-              className="text-[10px] font-bold px-3 py-1 bg-slate-800 rounded disabled:opacity-40 cursor-pointer"
+              type="button"
+              disabled={page >= pages}
+              onClick={() => {
+                setLoading(true);
+                fetchHistory(page + 1);
+              }}
+              className="bg-raised border-line text-ink-2 hover:text-ink cursor-pointer rounded-md border px-2 py-1 text-[10px] font-medium disabled:opacity-35"
             >
               Next
             </button>
           </div>
         )}
-      </div>
-    </div>
+      </motion.aside>
+    </motion.div>
   );
 }
 
-// ── Vehicle registry list ─────────────────────────────────────────────────────
+/* ── Vehicle registry ───────────────────────────────────────────────────── */
 
-function VehicleRegistry({ vehicles, loading, error, onSelect }) {
-  const totalOnline  = vehicles.filter((v) => v.camera_health === "online").length;
-  const totalStale   = vehicles.filter((v) => v.camera_health === "stale").length;
-  const totalOffline = vehicles.filter((v) => v.camera_health === "offline").length;
+function VehicleRegistry({ vehicles, loading, error, onSelect, maxHeight = "18rem" }) {
+  const count = (h) => vehicles.filter((v) => v.camera_health === h).length;
 
   return (
-    <section
-      className="bg-slate-900/40 border border-slate-800/60 p-4 rounded-2xl flex flex-col overflow-hidden min-h-[18rem] max-h-[26rem]"
-      data-testid="vehicle-registry"
+    <Panel
+      title="Fleet registry"
+      icon={Car}
+      count={vehicles.length}
+      testId="vehicle-registry"
+      className="flex min-h-0 flex-col"
+      bodyClassName="min-h-0"
+      actions={
+        <div className="flex items-center gap-2">
+          <Chip className="bg-good/10 text-good border-good/25" mono>
+            <Wifi className="h-2.5 w-2.5" />
+            {count("online")}
+          </Chip>
+          <Chip className="bg-warning/10 text-warning border-warning/25" mono>
+            <Clock className="h-2.5 w-2.5" />
+            {count("stale")}
+          </Chip>
+          <Chip className="bg-critical/10 text-critical border-critical/25" mono>
+            <WifiOff className="h-2.5 w-2.5" />
+            {count("offline")}
+          </Chip>
+        </div>
+      }
     >
-      {/* Header */}
-      <div className="flex items-center justify-between mb-3 shrink-0">
-        <div className="flex items-center gap-2 text-xs font-bold text-slate-400">
-          <Car className="h-4 w-4 text-indigo-400" />
-          <span>FLEET REGISTRY ({vehicles.length})</span>
-        </div>
-        {/* Health summary pills */}
-        <div className="flex gap-2 text-[9px] font-bold">
-          <span className="flex items-center gap-1 text-green-400">
-            <Wifi className="h-3 w-3" />{totalOnline}
-          </span>
-          <span className="flex items-center gap-1 text-amber-400">
-            <Clock className="h-3 w-3" />{totalStale}
-          </span>
-          <span className="flex items-center gap-1 text-red-400">
-            <WifiOff className="h-3 w-3" />{totalOffline}
-          </span>
-        </div>
-      </div>
-
-      {/* List */}
-      <div className="flex-1 overflow-y-auto custom-scrollbar space-y-2 pr-1">
+      <div
+        className="custom-scrollbar -mx-1 min-h-0 overflow-y-auto px-1"
+        style={maxHeight === "none" ? undefined : { maxHeight }}
+      >
         {loading && (
-          <div className="h-full flex items-center justify-center text-slate-600 text-xs py-8">
-            Loading vehicles...
+          <div className="flex flex-col gap-1.5">
+            {[0, 1, 2].map((i) => (
+              <Skeleton key={i} className="h-12 w-full" />
+            ))}
           </div>
         )}
-        {error && (
-          <p className="text-xs text-red-400 text-center py-6">Fleet API error: {error}</p>
-        )}
+        {error && <p className="text-critical py-6 text-center text-[11px]">Fleet API error: {error}</p>}
         {!loading && !error && vehicles.length === 0 && (
-          <div className="h-full flex flex-col items-center justify-center text-slate-600 text-xs py-8">
-            <Camera className="h-8 w-8 mb-2 opacity-20" />
-            No vehicles registered yet. Use the admin panel or POST /fleet/vehicles.
-          </div>
+          <EmptyState
+            icon={Camera}
+            title="No vehicles registered"
+            hint="Register one from the admin panel, or POST /fleet/vehicles."
+          />
         )}
-        {!loading && !error && vehicles.map((veh) => (
-          <div
-            key={veh.id}
-            onClick={() => onSelect(veh)}
-            className="bg-slate-950/40 border border-slate-800/80 hover:border-slate-700 rounded-xl p-3 flex items-center justify-between cursor-pointer transition duration-150 group"
-          >
-            <div className="flex items-center gap-3 min-w-0">
-              <div className="flex flex-col min-w-0">
-                <span className="text-xs font-bold text-slate-200 truncate">
-                  {veh.plate}
-                </span>
-                <span className="text-[9px] text-slate-500 mt-0.5 truncate">
-                  {veh.model || "No model"} · Camera: {veh.camera_id || "—"}
-                </span>
-              </div>
-            </div>
-            <div className="flex items-center gap-3 shrink-0">
-              <CameraHealthBadge health={veh.camera_health} />
-              <span className="text-[10px] text-slate-500 font-semibold">
-                {veh.report_count} rpt
-              </span>
-              <ChevronRight className="h-3.5 w-3.5 text-slate-600 group-hover:text-slate-400 transition" />
-            </div>
-          </div>
-        ))}
+        {!loading && !error && vehicles.length > 0 && (
+          <motion.ul variants={stagger(0.03)} initial="hidden" animate="show" className="flex flex-col gap-1.5">
+            {vehicles.map((veh) => (
+              <motion.li key={veh.id} variants={rowIn}>
+                <motion.button
+                  type="button"
+                  onClick={() => onSelect(veh)}
+                  whileHover={{ x: 2 }}
+                  whileTap={{ scale: 0.99 }}
+                  transition={T.fast}
+                  className="bg-raised/50 border-line hover:border-accent/30 group flex w-full cursor-pointer items-center justify-between gap-2 rounded-xl border p-2.5 text-left transition-colors"
+                >
+                  <div className="flex min-w-0 flex-col gap-0.5">
+                    <span className="text-ink truncate font-mono text-[11px] font-medium">
+                      {veh.plate}
+                    </span>
+                    <span className="text-ink-3 truncate text-[9px]">
+                      {veh.model || "No model"} · cam {veh.camera_id || "—"}
+                    </span>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2.5">
+                    <CameraHealthBadge health={veh.camera_health} />
+                    <span className="text-ink-3 tnum font-mono text-[10px]">{veh.report_count}</span>
+                    <ChevronRight className="text-ink-3 group-hover:text-accent h-3 w-3 transition-colors" />
+                  </div>
+                </motion.button>
+              </motion.li>
+            ))}
+          </motion.ul>
+        )}
       </div>
-    </section>
+    </Panel>
   );
 }
 
-// ── FleetDashboard (top-level export) ─────────────────────────────────────────
-
-/**
- * FleetDashboard — real fleet data from GET /fleet/vehicles + history drawer.
- *
- * Props:
- *   reports, filteredReports, totalReports, reportPage, onPageChange,
- *   onUpload, uploading,
- *   severityFilter, setSeverityFilter,
- *   classFilter, setClassFilter,
- *   statusFilter, setStatusFilter
- */
-export default function FleetDashboard({
-  filteredReports,
-  totalReports,
-  reportPage,
-  onPageChange,
-  onUpload,
-  uploading,
-  severityFilter,
-  setSeverityFilter,
-  classFilter,
-  setClassFilter,
-  statusFilter,
-  setStatusFilter,
-  realGpsOnly,
-  setRealGpsOnly,
-}) {
-  const [vehicles, setVehicles] = useState([]);
-  const [vehiclesLoading, setVehiclesLoading] = useState(true);
-  const [vehiclesError, setVehiclesError] = useState(null);
-  const [selectedVehicle, setSelectedVehicle] = useState(null);
-
-  // No synchronous setState — every write happens after an await, so the mount
-  // effect can call this directly (react-hooks/set-state-in-effect).
-  // `vehiclesLoading` starts true for the first load and is never re-raised:
-  // the 60 s refresh below must update the list *in place*. Toggling it back to
-  // true on each poll blanked the whole registry to "Loading vehicles..." every
-  // minute, which is why the spinner is now strictly an initial-load state.
-  const fetchVehicles = useCallback(async () => {
-    try {
-      const res = await fetch(`${BACKEND_URL}/fleet/vehicles?limit=100`, {
-        credentials: "include",
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      setVehicles(data.vehicles || []);
-      setVehiclesError(null);
-    } catch (err) {
-      setVehiclesError(err.message);
-    } finally {
-      setVehiclesLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    (async () => { await fetchVehicles(); })();
-    // Refresh vehicle health every 60 seconds (camera health changes in real time)
-    const interval = setInterval(fetchVehicles, 60_000);
-    return () => clearInterval(interval);
-  }, [fetchVehicles]);
-
-  return (
-    <>
-      <Filters
-        severityFilter={severityFilter}
-        setSeverityFilter={setSeverityFilter}
-        classFilter={classFilter}
-        setClassFilter={setClassFilter}
-        statusFilter={statusFilter}
-        setStatusFilter={setStatusFilter}
-        realGpsOnly={realGpsOnly}
-        setRealGpsOnly={setRealGpsOnly}
-      />
-      <UploadPanel onUpload={onUpload} uploading={uploading} />
-      <VehicleRegistry
-        vehicles={vehicles}
-        loading={vehiclesLoading}
-        error={vehiclesError}
-        onSelect={setSelectedVehicle}
-      />
-      <ReportLogs
-        reports={filteredReports}
-        totalReports={totalReports}
-        reportPage={reportPage}
-        onPageChange={onPageChange}
-      />
-
-      {/* History drawer — rendered at portal level, full-screen overlay */}
-      {selectedVehicle && (
-        <VehicleHistoryDrawer
-          vehicle={selectedVehicle}
-          onClose={() => setSelectedVehicle(null)}
-        />
-      )}
-    </>
-  );
-}
+export { VehicleRegistry, CameraHealthBadge, VehicleHistoryDrawer };

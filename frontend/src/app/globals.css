@@ -1,73 +1,437 @@
 @import "tailwindcss";
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   RoadSense AI — "Precision control room" design system
+   ═══════════════════════════════════════════════════════════════════════════
+
+   COLOR LAW (validated with the dataviz skill's validate_palette.js against
+   surface #0E1116, --mode dark). Do not add colors by eye; re-run the
+   validator instead.
+
+     1. ACCENT (cyan) is INTERFACE ONLY and never encodes data. It marks live,
+        active, focused, interactive. Because it never means anything in the
+        data layer, it never competes with severity for attention.
+        (It is also L≈0.80 — outside the dark categorical band — so it is not
+        a legal series color anyway.)
+
+     2. STATUS (good/warning/serious/critical) is RESERVED for severity and
+        road-health. Always paired with an icon + label, never color alone.
+        All four clear 3:1 on every surface here (measured: 3.64–10.31).
+
+     3. CATEGORICAL is detection-class IDENTITY only. Fixed slot order, never
+        cycled, assigned by class name — never by rank, so filtering never
+        repaints survivors. Order derived by enumerating all 8! orderings and
+        maximizing the minimum adjacent CVD ΔE:
+          worst adjacent ΔE 8.4 protan / 8.7 tritan · normal-vision 19.3
+        The 8.4 sits in the 6–8+ floor band, so categorical marks ALWAYS ship
+        secondary encoding (direct labels + legend).
+
+     Note: 6 of the 8 categorical hues sit <15 ΔE from a status color (measured:
+     green 9.7, aqua 9.8, magenta 9.0, yellow 9.0, red 7.2, orange 6.8). Only
+     blue (30.4) and violet (24.5) are clear. Mitigation is structural, per the
+     skill: class identity NEVER wears hue in the UI chrome (badges are neutral
+     ink) — categorical hue appears ONLY inside the class-distribution chart,
+     where no severity color is present and every segment is direct-labeled.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@theme {
+  /* ── Surfaces ─────────────────────────────────────────────────────────── */
+  --color-canvas: #06080b; /* page plane — the deepest black */
+  --color-sunken: #0a0d12; /* wells, inputs, tracks */
+  --color-surface: #0e1116; /* panel + chart surface (validator surface) */
+  --color-raised: #151a21; /* rows, cards on panels */
+  --color-hover: #1b212a;
+  --color-line: #1e242d; /* hairline border */
+  --color-line-soft: #161c24;
+
+  /* ── Ink ──────────────────────────────────────────────────────────────── */
+  --color-ink: #eef2f7; /* primary */
+  --color-ink-2: #9aa6b6; /* secondary */
+  --color-ink-3: #616d7e; /* muted — axis, labels, meta */
+  --color-grid: #1a2029; /* chart gridline hairline */
+
+  /* ── Accent — INTERFACE ONLY, never data ──────────────────────────────── */
+  --color-accent: #22d3ee; /* 10.46:1 on surface */
+  --color-accent-2: #67e8f9;
+  --color-accent-dim: #0e7490;
+
+  /* ── Status — RESERVED: severity + road health. Icon + label always. ──── */
+  --color-good: #0ca30c; /* low severity   · health ≥80  · 5.64:1 */
+  --color-warning: #fab219; /* medium severity· health ≥50  · 10.31:1 */
+  --color-serious: #ec835a; /*                 · health ≥30  · 7.17:1 */
+  --color-critical: #d03b3b; /* high severity  · health <30  · 3.94:1 */
+
+  /* ── Categorical — detection-class identity. Fixed order. ─────────────── */
+  --color-cat-1: #3987e5; /* blue    → pothole */
+  --color-cat-2: #008300; /* green   → road_crack */
+  --color-cat-3: #e66767; /* red     → broken_road */
+  --color-cat-4: #9085e9; /* violet  → water_filled_pothole */
+  --color-cat-5: #d55181; /* magenta → patch_repair */
+  --color-cat-6: #c98500; /* yellow  → road_edge_damage */
+  --color-cat-7: #199e70; /* aqua    → speed_breaker */
+  --color-cat-8: #d95926; /* orange  → reserve */
+  --color-cat-other: #616d7e; /* gray → unknown / folded tail */
+
+  /* ── Type ─────────────────────────────────────────────────────────────── */
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-jetbrains), ui-monospace, "SFMono-Regular", monospace;
+
+  /* ── Motion ───────────────────────────────────────────────────────────── */
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* ── Base ───────────────────────────────────────────────────────────────── */
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  color-scheme: dark;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html,
+body {
+  height: 100%;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11"; /* Inter: legible a/g/l/1 */
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
-/* Custom Leaflet dark overrides */
+/* Numerals that must align vertically (table rows, axis ticks, coords).
+   Deliberately NOT applied to stat-tile values or the hero figure — equal-width
+   digits make large standalone numbers look loose. */
+.tnum {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+/* The eyebrow label. Used sparingly — the old UI made EVERYTHING a 9px
+   uppercase bold label, which is why it read as noise instead of data. */
+.eyebrow {
+  font-size: 10px;
+  line-height: 1;
+  font-weight: 500;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--color-ink-3);
+}
+
+::selection {
+  background: color-mix(in oklab, var(--color-accent) 30%, transparent);
+  color: #fff;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* ── Texture: the faint control-room grid on the page plane ─────────────── */
+
+.bg-grid {
+  background-image:
+    linear-gradient(to right, rgba(255, 255, 255, 0.028) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.028) 1px, transparent 1px);
+  background-size: 44px 44px;
+}
+
+/* ── Motion keyframes ───────────────────────────────────────────────────── */
+
+@keyframes rs-pulse-ring {
+  0% {
+    transform: scale(0.6);
+    opacity: 0.75;
+  }
+  70% {
+    transform: scale(2.4);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(2.4);
+    opacity: 0;
+  }
+}
+
+@keyframes rs-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@keyframes rs-sweep {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes rs-drift {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  33% {
+    transform: translate3d(3%, -4%, 0) scale(1.06);
+  }
+  66% {
+    transform: translate3d(-3%, 3%, 0) scale(0.96);
+  }
+}
+
+@keyframes rs-scan {
+  0% {
+    transform: translateY(-100%);
+  }
+  100% {
+    transform: translateY(1000%);
+  }
+}
+
+.animate-breathe {
+  animation: rs-breathe 2.4s ease-in-out infinite;
+}
+.animate-drift {
+  animation: rs-drift 22s ease-in-out infinite;
+}
+.animate-sweep {
+  animation: rs-sweep 1.6s var(--ease-out-expo) infinite;
+}
+
+/* ── Aurora + grain (the "realistic" premium background) ──────────────────────
+   Flat gradients and vector shapes read as cheap CGI. Two things fix that and
+   they're the whole trick behind every expensive-looking dark login (Linear,
+   Vercel, Raycast): soft ORGANIC light that drifts, and FILM GRAIN over the top.
+   Grain breaks the perfectly-smooth gradient banding that screams "digital",
+   so the surface reads as a photographed thing rather than a fill.            */
+
+@keyframes rs-aurora-a {
+  0%,
+  100% {
+    transform: translate3d(-8%, -6%, 0) scale(1.1) rotate(0deg);
+  }
+  50% {
+    transform: translate3d(6%, 8%, 0) scale(1.35) rotate(18deg);
+  }
+}
+@keyframes rs-aurora-b {
+  0%,
+  100% {
+    transform: translate3d(8%, 4%, 0) scale(1.25) rotate(0deg);
+  }
+  50% {
+    transform: translate3d(-6%, -8%, 0) scale(1) rotate(-16deg);
+  }
+}
+@keyframes rs-aurora-c {
+  0%,
+  100% {
+    transform: translate3d(0, 6%, 0) scale(1);
+  }
+  50% {
+    transform: translate3d(4%, -6%, 0) scale(1.3);
+  }
+}
+
+.aurora-a {
+  animation: rs-aurora-a 26s ease-in-out infinite;
+}
+.aurora-b {
+  animation: rs-aurora-b 32s ease-in-out infinite;
+}
+.aurora-c {
+  animation: rs-aurora-c 22s ease-in-out infinite;
+}
+
+/* Film grain overlay. Static fractal noise as a data-URI, tiled, softened with
+   `overlay` blend so it textures the light beneath without greying it. */
+.grain::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.08;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* Real dark glassmorphism. Frosted, layered, with a top specular highlight and
+   a soft floating shadow. Subtle by design — heavy white fills look like milk,
+   not glass, on a dark ground. */
+.glass {
+  background: rgba(255, 255, 255, 0.045);
+  backdrop-filter: blur(28px) saturate(150%);
+  -webkit-backdrop-filter: blur(28px) saturate(150%);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  box-shadow:
+    0 32px 80px -20px rgba(0, 0, 0, 0.75),
+    0 2px 12px -4px rgba(0, 0, 0, 0.5),
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.1),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.02);
+}
+/* The specular sweep across the top edge — a glancing light on real glass. */
+.glass-sheen::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: radial-gradient(
+    120% 60% at 20% 0%,
+    rgba(255, 255, 255, 0.09),
+    transparent 55%
+  );
+}
+
+.glass-input {
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  transition:
+    border-color 0.15s,
+    background 0.15s;
+}
+.glass-input:focus-within {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: color-mix(in oklab, var(--color-accent) 55%, transparent);
+}
+
+/* ── Leaflet: dark canvas ───────────────────────────────────────────────── */
+
+.leaflet-container {
+  background: #06080b !important;
+  font-family: var(--font-sans) !important;
+}
+
+/* CARTO dark tiles still land a good deal lighter than this canvas — against
+   near-black panels they read as a washed grey slab and the floating panels
+   stop looking like they belong to the same surface. Pull them down toward the
+   page plane, keeping enough contrast for streets to stay legible. */
+.leaflet-tile-pane {
+  filter: saturate(0.55) brightness(0.7) contrast(1.12);
+}
+
+.leaflet-control-attribution {
+  background: rgba(6, 8, 11, 0.78) !important;
+  color: #616d7e !important;
+  font-size: 9px !important;
+  border-radius: 6px 0 0 0 !important;
+  backdrop-filter: blur(8px);
+}
+.leaflet-control-attribution a {
+  color: #9aa6b6 !important;
+}
+
+.leaflet-bar {
+  border: 1px solid var(--color-line) !important;
+  border-radius: 10px !important;
+  overflow: hidden;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5) !important;
+  backdrop-filter: blur(12px);
+}
+.leaflet-bar a {
+  background: rgba(14, 17, 22, 0.9) !important;
+  color: var(--color-ink-2) !important;
+  border-bottom: 1px solid var(--color-line) !important;
+  transition: all 0.15s var(--ease-out-expo);
+}
+.leaflet-bar a:hover {
+  background: var(--color-hover) !important;
+  color: var(--color-accent) !important;
+}
+
+/* Popup */
 .roadsense-popup .leaflet-popup-content-wrapper {
-  background: #0f172a !important; /* slate-900 */
-  color: #f8fafc !important; /* slate-50 */
-  border: 1px solid #334155 !important; /* slate-700 */
-  border-radius: 0.75rem !important;
-  padding: 4px !important;
-  box-shadow: 0 20px 25px -5px rgb(0 0 0 / 0.5) !important;
+  background: rgba(14, 17, 22, 0.96) !important;
+  color: var(--color-ink) !important;
+  border: 1px solid var(--color-line) !important;
+  border-radius: 14px !important;
+  padding: 2px !important;
+  box-shadow:
+    0 24px 48px -12px rgba(0, 0, 0, 0.8),
+    0 0 0 1px rgba(255, 255, 255, 0.04) !important;
+  backdrop-filter: blur(20px) saturate(1.2);
 }
-
 .roadsense-popup .leaflet-popup-content {
-  margin: 8px !important;
+  margin: 10px !important;
+  line-height: 1.45 !important;
 }
-
 .roadsense-popup .leaflet-popup-tip {
-  background: #0f172a !important;
-  border-left: 1px solid #334155 !important;
-  border-bottom: 1px solid #334155 !important;
+  background: rgba(14, 17, 22, 0.96) !important;
+  border-left: 1px solid var(--color-line) !important;
+  border-bottom: 1px solid var(--color-line) !important;
 }
-
 .roadsense-popup .leaflet-popup-close-button {
-  color: #94a3b8 !important; /* slate-400 */
+  color: var(--color-ink-3) !important;
   padding: 10px 10px 0 0 !important;
+  transition: color 0.15s;
 }
-
 .roadsense-popup .leaflet-popup-close-button:hover {
-  color: #f8fafc !important;
+  color: var(--color-ink) !important;
   background: transparent !important;
 }
 
-/* Custom scrollbar for list containers */
-.custom-scrollbar::-webkit-scrollbar {
-  width: 6px;
-}
-.custom-scrollbar::-webkit-scrollbar-track {
-  background: rgba(15, 23, 42, 0.3);
-  border-radius: 4px;
-}
-.custom-scrollbar::-webkit-scrollbar-thumb {
-  background: rgba(148, 163, 184, 0.3);
-  border-radius: 4px;
-}
-.custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: rgba(148, 163, 184, 0.5);
+/* Marker pins carry their own SVG; kill Leaflet's default box. */
+.rs-marker {
+  background: transparent !important;
+  border: none !important;
 }
 
+/* ── Scrollbar ──────────────────────────────────────────────────────────── */
+
+.custom-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-line) transparent;
+}
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: var(--color-line);
+  border-radius: 99px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #2a323d;
+}
+
+/* ── Recharts chrome ────────────────────────────────────────────────────── */
+
+.recharts-surface:focus,
+.recharts-wrapper:focus {
+  outline: none;
+}
+.recharts-cartesian-axis-line,
+.recharts-cartesian-axis-tick-line {
+  stroke: transparent;
+}
+
+/* ── Reduced motion: honour it everywhere ───────────────────────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .animate-drift,
+  .animate-breathe,
+  .animate-sweep {
+    animation: none !important;
+  }
+}
