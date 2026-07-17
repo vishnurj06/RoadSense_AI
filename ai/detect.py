@@ -104,6 +104,10 @@ def main():
             "vehicle_id": args.vehicle_id,
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "gps": {"lat": round(fix.lat, 6), "lon": round(fix.lon, 6)},
+            # Contract v3 §3.2 — exif | gpx | faked. The backend marks `faked`
+            # pins in the UI (B3-6), so this must always be sent: an absent
+            # value lets a placebo location pass as a real fix.
+            "gps_source": fix.source,
             "speed_kmph": fix.speed_kmph,  # nullable per Contract v2 §4.2
             "model_version": MODEL_VERSION,
             "detections": detections,
