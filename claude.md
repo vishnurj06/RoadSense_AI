@@ -1060,3 +1060,21 @@ Street imagery captures faces + plates = personal data (DPDP/GDPR). Now redacted
 - ⚠️ **Not validated on a real face/plate image** — tests prove the *pipeline* runs and the *gate*
   works, not Haar's detection accuracy (which is known-mediocre). Validate on real footage before
   trusting it as a compliance control. Also un-exercised end-to-end with `PRIVACY_BLUR=1` against live S3.
+
+### ✅ Live verification (2026-07-18, Person B, running stack)
+
+All 5 applicable items confirmed **in a real browser** against the live stack (real `ai/infer_service`
+on :8001, Postgres, Redis, MinIO): #8 bell renders, #2 queue shows Detected/**Approved**/Assigned/
+Repair, #4 login 429 after 5 fails, #3/#10 queue shows ⚡ priority ordered highest-first, and **#1/#9
+verified end-to-end** — two `/detect` reports at one spot from `car-A`+`car-B` clustered into a single
+pin that flipped to green **"✓ VERIFIED — corroborated by ≥2 vehicles"** with the ✓ marker; a single
+report shows **"⏳ UNVERIFIED"**.
+
+> ⚠️ **New known gap (demo tool, not a bug): the web "Demo Telemetry Upload" cannot demonstrate
+> clustering or verification.** `page.js:378-380` **hardcodes `vehicle_id="demo-web-upload"`** and
+> **jitters GPS randomly** per upload — so repeated UI uploads are always one vehicle at scattered
+> locations, never ≥2 vehicles at one spot. Verification is only reachable via the API (or a real
+> multi-vehicle fleet). Worth letting the demo uploader pick a vehicle_id + reuse a location so #1/#9
+> are demoable without curl. Migration note: the dev `roadsense` DB is shared with the test suite
+> (`create_all`), so it drifted ahead of Alembic — `alembic upgrade head` hit a DuplicateColumn and was
+> resolved with `alembic stamp head` (schema already matched). Fresh deploys upgrade cleanly.
