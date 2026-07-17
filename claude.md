@@ -2,7 +2,7 @@
 
 This file is the canonical progress tracker for the entire RoadSense AI project (Backend, Frontend,
 and AI Pipeline). Updated after every completed and verified task.
-Last updated: **2026-07-17** — S5 dry-run in progress · S5-11 CI fully green (ruff + ESLint) · B3-5 `road_name` surfaced · B3-6 provenance fix completed (a *second* omission was found in the frontend adapter).
+Last updated: **2026-07-17** — **✅ SYNC POINT S5 VERIFIED** (manual UI confirmation by Person B) · merged Person A's `v4-all` + A3-7 registry · B3-4 done (`models.json` → DB bridge) · 🔴 **PRD 95% precision target falsified — needs renegotiation (D-4)**.
 
 ## Project Metadata
 
@@ -175,7 +175,7 @@ Last updated: **2026-07-17** — S5 dry-run in progress · S5-11 CI fully green 
 | **B3-1** | Fleet APIs (vehicles table, registry endpoints, camera health) | ✅ Done | See breakdown below. |
 | **B3-2** | Notifications (email digest, rate-limit, in-app bell) | ✅ Done | See breakdown below. |
 | **B3-3** | Road Health Score (formula, choropleth, normalisation) | ⬜ Planned | — |
-| **B3-4** | Model registry (`models` table, activate endpoint, Admin UI) | ✅ Done | See breakdown below. Pairs with A3-7. |
+| **B3-4** | Model registry (`models` table, activate endpoint, Admin UI) | ✅ **Done** | DB registry + **`ai/models.json` → DB sync** (S5-12). Admin UI shows Person A's real `v3-merged`/`v4-all`. Pairs with A3-7. See §5e. |
 | **B3-5** | Data enrichment — `road_name` (Nominatim) + `weather` (OpenWeather) | 🟡 Mostly done | Backend enrichment live (`enrichment.py`). `road_name` now surfaced through `/map` → popup (S5-11, §5d). **Remaining:** `weather` is stored but rendered nowhere. |
 | **B3-6** | GPS provenance — visually mark `faked` pins on map | ✅ Done | Marker + popup + filter all fail closed. Root-cause bug fixed 2026-07-17 (`/map` dropped `gps_source`). See §5c. |
 | **B3-7** | Performance validation (~10k reports, p95 for `/map` + `/analytics`) | ⬜ Planned | — |
@@ -187,7 +187,7 @@ Last updated: **2026-07-17** — S5 dry-run in progress · S5-11 CI fully green 
 | Sub-task | Status | Notes |
 |---|---|---|
 | ~~D-2b~~ Duplicate `POST /detect-image` removed | ✅ Done `780057d` | Kept handler at line 441 (S3 + clustering + cache). CI was red (ruff F811) — now green. |
-| ~~D-2~~ Delete stale `feat/ai-phase2` branch | ✅ Done | Deleted by user. Branch is gone. |
+| ~~D-2~~ Delete stale `feat/ai-phase2` branch | ✅ Done **(S5-12)** | ⚠️ This row previously read "Deleted by user. Branch is gone." — that was **not true**: the local branch survived until 2026-07-17. Actually deleted in S5-12. See G-11. |
 | ~~G-5~~ Real `GET /admin/system-health` | ✅ Done | Replaced hardcoded literals with `psutil` CPU/memory/disk + live HTTP probe of `INFERENCE_URL/health`. `psutil>=5.9.0` added to `requirements.txt`. |
 | ~~G-12~~ Add `ai/` to CI syntax gate | ✅ Done | Added `python -m compileall -q ai backend` step to `.github/workflows/ci.yml` **before** ruff/pytest. D-0 process fix. |
 | ~~G-8~~ Update or delete `task.md` | ✅ Done | `task.md` deleted by user. |
@@ -312,12 +312,14 @@ Last updated: **2026-07-17** — S5 dry-run in progress · S5-11 CI fully green 
 
 ## 4. Verification & Testing Status
 
-- **Automated Tests:** **73 tests total** — 17 backend + 56 frontend.
-  - **Backend (17):** `backend/test_api.py`, `backend/test_detect_image.py`, `backend/test_stub.py`, `backend/test_repair.py`, `backend/test_auth.py` — auth, state-machine, stub, upload, spatial clustering, **B3-6 GPS provenance + B3-5 `road_name` end-to-end**. All **PASSING**.
+- **Sync Point S5:** ✅ **VERIFIED** (2026-07-17) — full Phase-3 dry-run against the live stack. Person B confirmed the B3-6 amber GPS warning renders correctly on a real web-UI upload through MinIO/PostGIS.
+- **Automated Tests:** **81 tests total** — 25 backend + 56 frontend.
+  - **Backend (25):** `backend/test_api.py`, `backend/test_detect_image.py`, `backend/test_stub.py`, `backend/test_repair.py`, `backend/test_auth.py`, **`backend/test_model_registry.py` (8)** — auth, state-machine, stub, upload, spatial clustering, **B3-6 GPS provenance + B3-5 `road_name` end-to-end**, **B3-4 `models.json` sync against the real registry file**. All **PASSING**.
   - **Frontend (56):** `src/__tests__/classUtils.test.js` (21), `gpsUtils.test.js` (13), `mapUtils.test.js` (8), `StatCards.test.jsx` (6), `Filters.test.jsx` (8) — Contract v3 forward-compatibility, GPS provenance fail-closed, GeoJSON→UI adapter field preservation, component rendering, null-safety. All **PASSING**.
-- **CI Status:** ✅ **Both jobs green** as of S5-11 (2026-07-17), verified locally end-to-end:
-  `backend-lint-and-test` (compileall ✅ → ruff ✅ *All checks passed* → pytest ✅ 17) and
-  `frontend-lint-build` (ESLint ✅ exit 0 → Jest ✅ 56 → `next build` ✅). See §5d.
+- **CI Status:** ✅ **Both jobs green** as of S5-12 (2026-07-17), each step run locally exactly as CI
+  runs it: `backend-lint-and-test` (compileall ✅ → `ruff check backend/` ✅ → **`ruff format --check
+  backend/` ✅ 32 files** → pytest ✅ 25) and `frontend-lint-build` (ESLint ✅ exit 0 → Jest ✅ 56 →
+  `next build` ✅). See §5e — note §5d's earlier "green" claim had missed the format step.
 
 - **AI model validation:** `potholevideos.mp4` — 43/55 frames detected at conf=0.30. Boxes correctly
   placed on real potholes. `dashcam.mp4` (Oregon highway, no potholes) — 3/57 frames fire (all false
@@ -340,7 +342,7 @@ Last updated: **2026-07-17** — S5 dry-run in progress · S5-11 CI fully green 
 | G-7 | ~~`page.js` is 1,064 lines — growing unwieldy~~ | ✅ **Closed B3-8** | Split into `AuthorityDashboard`, `FleetDashboard`, `AdminDashboard`, `StatCards`, `Toast`, `Filters`, `UploadPanel`, `ReportLogs`. `page.js` is now ~220 lines. |
 | G-8 | ~~`task.md` is stale~~ | ✅ **Closed B3-0** | `task.md` deleted by user. `claude.md` is the canonical source. |
 | ~~G-10~~ | ~~`POST /detect-image` defined twice — **CI was red** (`ruff F811`)~~ | ✅ Fixed `780057d` | Person B (verify) | Merge artifact from `3a3aa52`. Kept the handler at 441 (S3 + PostGIS clustering + cache invalidation); removed 711 (older B-1 with none of those). It was already dead code — FastAPI matches the first route — so zero runtime change. **B: confirm this was your intended handler.** |
-| **G-11** | 🔴 **Stale `feat/ai-phase2` branch is a landmine** | 🔴 High | Both | It holds pre-v3 `ai/` files. Merging it into `main` (`3a3aa52`) reverted A-5 and left `ai/detect.py` with raw conflict markers — `main` was tagged "phase 2 signoff" while it **did not parse** (fixed in `42b4edd`). **Delete the branch.** |
+| ~~G-11~~ | ~~Stale `feat/ai-phase2` branch is a landmine~~ | ✅ **Closed S5-12** | Both | **Actually closed now.** This row previously claimed "deleted by user" — the local branch (`ce9ef0c`) was still present as late as 2026-07-17. Verified merged into `main`, then deleted; the remote copy was already gone. Its damage is on the record: merging it (`3a3aa52`) reverted A-5 and left `ai/detect.py` with raw conflict markers on a `main` tagged "phase 2 signoff" that **did not parse** (fixed in `42b4edd`). The CI `compileall` gate (G-12) now makes that class of failure impossible to merge. |
 | ~~G-12~~ | ~~CI does not check `ai/` at all~~ | ✅ **Closed B3-0** | Added `python -m compileall -q ai backend` step to CI before ruff/pytest. D-0 process fix. |
 
 | **G-13** | ~~Weights still not handed to Person B~~ | ✅ Acknowledged | Person A | Context documented in `claude.md`. Not a blocker for S5 (stub covers dev). |
@@ -494,10 +496,95 @@ Both halves below were needed — the wrapper alone would have been mere lint-si
   fail when `gps_source` is removed), so it genuinely catches this regression.
 - Backend regression test extended to assert `road_name` is present in the `/map` payload.
 
-> ⚠️ **Still not driven against the live stack.** Every gate above is static or automated. The amber
-> pin and the road-name line have **not** been confirmed in a running browser against real
-> MinIO/PostGIS. One manual upload is worth doing before S5 sign-off — that is precisely the check
-> that would have caught the adapter omission the first time.
+> ✅ **Confirmed against the live stack (2026-07-17).** Person B ran a manual upload through the web
+> UI against real MinIO/PostGIS: the amber "UNVERIFIED GPS" warning rendered correctly. **B3-6 is
+> verified end-to-end, not just test-green.**
+
+---
+
+## 5e. S5-12 — Sync with Person A's `v4-all` + B3-4 model registry bridge (2026-07-17)
+
+### Repo sync
+
+Merged 9 commits from `origin/main` (`46d7e6e`) — `v4-all`, `ai/models.json`, `ai/fetch_model.py`,
+`ai/experiments.md`. Merge commit `56c81cb`. Only `claude.md` conflicted (Person A added the Phase-3
+AI-track table where this side had nothing); resolved by keeping his block whole. Verified
+afterwards: **zero conflict markers anywhere in the repo** and `compileall` passes — the two checks
+that `3a3aa52` failed.
+
+> 🔴 **The Phase-3 platform track had never been committed.** The sync found **34 untracked files** —
+> `routers/`, `lib/`, all tests, all migrations, `enrichment.py`, `notification_service.py`. Every
+> B3-1/B3-2/B3-4/B3-8 "✅ Done" in this tracker existed only in one working tree; a disk failure
+> would have erased Phase 3. Now committed as `36127bf`. **Lesson: "Done" in this file must mean
+> "committed", not "works on my machine."**
+
+### Corrections to the directive's premises
+
+Three of the five instructions were based on state that no longer matched the repo:
+
+| Directive | Reality |
+|---|---|
+| Delete `feat/ai-phase2` local **and** remote | Remote copy was **already gone**; `git push origin --delete` had nothing to delete. Local branch **did still exist** despite this tracker claiming otherwise (G-11 was never actually closed) — now deleted (`ce9ef0c`, verified merged). **G-11 closed for real.** |
+| Delete dead B-1 code at `main.py:711` | **Already removed in `780015d`/`780057d` (G-10).** Only one `/detect-image` exists (line ~526). Line 711 is now inside the **live `GET /map` handler** — deleting it would have destroyed the endpoint B3-5/B3-6 depend on. **No action taken.** |
+| Add `python -m compileall ai backend` to CI | **Already present** at `ci.yml:47` as `compileall -q ai backend` (G-12, added in B3-0). Adding it again would duplicate the step. **No action taken.** |
+
+### B3-4 — how the two registries were reconciled
+
+`GET /admin/models` already existed (DB-backed, with atomic activate + wired UI). Adding a second
+route on the same path is precisely the **G-10 duplicate-route bug** — FastAPI serves the first and
+silently ignores the second. So instead of a competing endpoint, the two registries were **bridged**:
+
+| Registry | Owner | Answers |
+|---|---|---|
+| `ai/models.json` | Person A (A3-7) | **Distribution** — what is published, where to fetch it, SHA256, known weaknesses |
+| `ai_models` table | Person B (B3-4) | **Deployment** — what is registered *here*, and which version an admin activated |
+
+| Change | File | Notes |
+|---|---|---|
+| Sync module | `backend/model_registry.py` **(new)** | Upsert-by-version. `load_registry()` + `sync_registry_to_db()` + `seed_model_registry()`. |
+| Sync endpoint | `routers/admin.py` | `POST /admin/models/sync` (admin only), idempotent. 404 if `models.json` missing, 422 if malformed. |
+| Startup seed | `main.py` | Best-effort, mirrors `seed_users()`. A missing registry never blocks boot. |
+| Admin UI | `AdminDashboard.js` | New **Sync** button; empty state points at it. |
+
+**Design rule — activation is never overridden.** `is_active` is *deployment* state (the admin's
+intent); `models.json`'s `default` is *distribution* state (Person A's recommendation). Sync only
+activates when **nothing** is active (fresh install). A deliberate admin pin survives any re-sync —
+covered by `test_resync_is_idempotent_and_never_overrides_admin_activation`.
+
+**Metrics are copied verbatim, and the UI does not launder them.** Person A is explicit that RDD test
+AP is **not comparable across versions** (v3 scored on India-only, v4 on all six countries) and that
+the real-footage numbers are the ship gate. The Admin UI therefore headlines **real-footage hit rate**
+(`109/122`, `0/57` FP) and demotes RDD mAP50 to a secondary line carrying his own `_note` as tooltip.
+Rendering `rdd_test_map50` as a bare "mAP50" would have laundered exactly the caveat he attached.
+`known_weaknesses` are folded into `notes` so they face the admin choosing a model.
+
+### ⚠️ Correction: §5d's "CI green" claim was wrong
+
+CI runs **two** ruff steps — `ruff check backend/` (lint) *and* `ruff format --check backend/`
+(`ci.yml:53`). §5d ran only the first and declared CI green. `ruff format --check` was in fact **red
+on 17 files**. Confirmed via a clean worktree at `46d7e6e` that it was **green before Phase 3**
+(18 files, all formatted) — so the Phase-3 work broke it and the claim was simply unverified.
+`ruff format backend/` applied; now **32 files, all formatted**. *Verify the gate you claim, not an
+adjacent one.*
+
+### Verification
+
+| Gate (exactly as CI runs it) | Result |
+|---|---|
+| `python -m compileall -q ai backend` | ✅ PASS |
+| `ruff check backend/` | ✅ All checks passed |
+| `ruff format --check backend/` | ✅ 32 files already formatted (**was 17 red**) |
+| `pytest` | ✅ **25 passed** (was 17; +8 registry tests) |
+| `eslint src` | ✅ exit 0 |
+| `jest` | ✅ **56 passed**, 5 suites |
+| `next build` | ✅ Compiled successfully |
+
+**Total tests: 81** (25 backend + 56 frontend). New `backend/test_model_registry.py` runs against the
+**real** `ai/models.json`, so a schema change on Person A's side breaks a test rather than the UI.
+
+> ⚠️ **Not yet verified live:** the Admin UI Sync button has not been clicked against a running
+> backend + Postgres. The endpoint is covered by an API-level test (`TestClient` → real DB), but the
+> button itself is untested in a browser. Worth one click before Phase 4.
 
 ---
 
@@ -531,9 +618,79 @@ Both halves below were needed — the wrapper alone would have been mere lint-si
 
 ---
 
-## 7. Phase 3 (Beta) — What's Next
+## 6b. 🔴 D-4 — The PRD's accuracy targets are falsified. Renegotiate before Phase 4.
 
-These are NOT current tasks — they define the scope of Phase 3:
+**This is a product decision, not an engineering task, and it is now blocking.**
+
+The PRD specifies **precision ≥ 95% / recall ≥ 90%**; Phase 2 specified **mAP50 ≥ 0.75**. Person A has
+**experimentally falsified both as reachable by scaling this approach** — two independent hypotheses,
+each tested and each dead:
+
+| Hypothesis | Experiment | Result |
+|---|---|---|
+| "It's under-trained" — more epochs, bigger model, higher resolution | `v2-2` | ❌ **Falsified** — 0.556 → **0.550**. Moved *along* the precision/recall curve, not the curve itself. |
+| "It needs more data" | `v4-all` — **4x the data** (5.4k → 27k images, 1 → 6 countries) | ❌ **Falsified as a step-change** — net **+4 frames** (105/122 → 109/122). Mixed, not a clean win: better on `potholevideos` (45→51/55), *worse* on `india` (60→58/67). |
+
+**The ceiling is LABEL QUALITY**, not data quantity and not training config. RDD's labels are
+inconsistent — the same damage is boxed differently across countries, and much is unlabelled.
+This is evidence, not opinion. Anyone proposing "just train it longer / feed it more" should be
+shown the table in `ai/experiments.md` §"What it actually proves".
+
+**The three remaining levers** (per `ai/experiments.md`):
+1. **Better labels** — relabel a domain-matched subset to a consistent standard. Expensive, slow, and the only lever with real headroom.
+2. **A domain-matched dataset** — real vehicle-mounted dashcam footage. **Also closes A3-5**, the largest untested risk (see below).
+3. **Accept a lower, honest target** — cheapest, and defensible *because* it is measured.
+
+**Recommendation:** re-baseline the PRD on the **real-footage ship gate** the AI track has actually
+been using — `109/122` frames hit with `0/57` false positives — rather than on an RDD mAP50 number
+that Person A has repeatedly shown "has never decided anything here" and is not even comparable
+across versions. **Person B cannot make this call alone — it needs the PRD owner.**
+
+> ⚠️ **The risk that dwarfs the target debate:** *no model has ever been validated from a moving
+> vehicle.* Every positive result — v3 and v4 alike — comes from the same low, road-filling camera
+> domain (median detection height 0.39 vs 0.41). The product is a **windshield dashcam**. A3-5 is
+> ⬜ Not started for want of footage. Renegotiating a number measured only in the wrong domain risks
+> agreeing a target that is still meaningless. **Get dashcam footage first.**
+
+---
+
+## 7. Phase 4 (Deployment & Edge Cases) — Starting Position
+
+**Phase 3 platform status: feature-complete except B3-3 / B3-7 / B3-9.** Everything is committed,
+CI is green on every gate, 81 tests pass, and S5 is verified live.
+
+### Entry criteria — carried over, must land before/early in Phase 4
+
+| # | Item | Owner | Why it blocks |
+|---|---|---|---|
+| **D-4** | **PRD target renegotiation** (§6b) | **PRD owner** + A | Phase 4 cannot declare "done" against a target proven unreachable. |
+| **A3-5** | Field validation from a real vehicle | A | Largest untested risk. Every accuracy claim is out-of-domain until this exists. |
+| **B3-3** | Road Health Score | B | Last unbuilt Phase-3 platform feature. |
+| **B3-7** | Performance validation (~10k reports, p95 `/map` + `/analytics` < 2 s) | B | Indexes exist (`d7a1f0962038`) + `scripts/seed_10k_reports.py`; **never actually measured**. |
+| **B3-9** | Security — `SECRET_KEY` rotation, GPS validation, encrypted uploads | B | `SECRET_KEY` still has a dev default in `auth.py`. **Hard blocker for any public deployment.** |
+
+### Phase 4 scope
+
+1. **Deployment** — cloud Postgres+PostGIS, real S3, managed Redis, domain + TLS, secrets out of code. `docker-compose` → a real target.
+2. **Model hot-swap** — `POST /admin/models/{id}/activate` records *intent* only; the inference process is not reloaded. Close the loop with a watcher on `is_active` + `fetch_model.py` (SHA256-verified). **The registry bridge in §5e is the groundwork for this.**
+3. **Edge cases** — offline/intermittent capture, duplicate suppression across drives, clock skew, GPS dropout mid-drive (`gps_source` provenance already carries this), 10 MB upload cap under real 4G.
+4. **Latency headroom** — A3-6 passes at **93.7 ms against a 100 ms budget: a 6% margin**. Depth (A3-3) or segmentation would blow it. 93.7 ms ≈ **10 fps — not real-time for 30 fps video**; decide the sampling story explicitly.
+5. **`weather` enrichment** — stored by `enrichment.py`, rendered nowhere. Either surface it or drop the column (B3-5 residue).
+6. **Observability** — `/health` and `/admin/system-health` are live; no metrics, tracing or alerting.
+
+### Known Phase-4 traps, learned the hard way
+
+- **A field must be listed in 3 places** to reach the map (backend `properties` → `mapUtils.mapFeatureToIssue` → component). Miss one and it is `undefined` with **no error anywhere** — this bit B3-6 twice.
+- **Fail closed on provenance and trust.** Every `gps_source` consumer independently defaulted a missing value to `"exif"` and rendered faked pins as verified.
+- **Verify the gate you claim.** §5d called CI green having run only one of the two ruff steps.
+- **"Done" must mean committed.** 34 files of "✅ Done" Phase-3 work were never in git.
+- **Green tests ≠ working feature.** B3-6 was test-green end-to-end while broken in the browser. The manual click found it. **Drive the UI.**
+
+---
+
+## 8. Phase 3 (Beta) — Original Scope (reference)
+
+These were the Phase-3 scope items as defined at kickoff:
 
 - Multi-class model: ≥2 classes (`crack` priority), working toward all 7 PRD classes
 - Real GPS: GPX track reader or phone-sensor interpolation
