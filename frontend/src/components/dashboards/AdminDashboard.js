@@ -1,206 +1,155 @@
 "use client";
 
 import React, { useState, useEffect, useCallback } from "react";
+import { motion } from "motion/react";
 import {
   Users,
   Server,
-  Compass,
+  Boxes,
   Cpu,
-  Activity,
+  MemoryStick,
   HardDrive,
-  CheckCircle,
+  Database,
+  CheckCircle2,
   RefreshCw,
   PackageCheck,
   AlertCircle,
+  Zap,
 } from "lucide-react";
+import Panel from "@/components/ui/Panel";
 import UploadPanel from "@/components/shared/UploadPanel";
+import { Meter, EmptyState, Skeleton, Chip, CountUp } from "@/components/ui/Primitives";
+import { ACCENT, STATUS, INK } from "@/lib/theme";
+import { stagger, rowIn, T } from "@/lib/motion";
 
 const BACKEND_URL = "http://localhost:8000";
 
-// ─── UserDirectory ────────────────────────────────────────────────────────────
+/* ── User directory ─────────────────────────────────────────────────────── */
 
-/**
- * UserDirectory — list of registered users with role selector.
- */
 function UserDirectory({ adminUsers, onRoleChange }) {
   return (
-    <section
-      className="bg-slate-900/40 border border-slate-800/60 p-4 rounded-2xl flex flex-col overflow-hidden min-h-[14rem] max-h-[18rem]"
-      data-testid="user-directory"
+    <Panel
+      title="User registry"
+      icon={Users}
+      count={adminUsers.length}
+      testId="user-directory"
+      className="flex min-h-0 flex-col"
+      bodyClassName="min-h-0"
     >
-      <div className="flex items-center gap-2 text-xs font-bold text-slate-400 mb-3 shrink-0">
-        <Users className="h-4 w-4 text-blue-400" />
-        <span>USER REGISTRY ({adminUsers.length})</span>
-      </div>
-      <div className="flex-1 overflow-y-auto custom-scrollbar space-y-2 pr-1">
+      <div className="custom-scrollbar -mx-1 max-h-[14rem] min-h-0 overflow-y-auto px-1">
         {adminUsers.length === 0 ? (
-          <p className="text-xs text-slate-600 text-center py-4">
-            No users registered.
-          </p>
+          <EmptyState icon={Users} title="No users registered" />
         ) : (
-          adminUsers.map((u) => (
-            <div
-              key={u.id}
-              className="bg-slate-950/40 border border-slate-800/80 rounded-xl p-3 flex items-center justify-between"
-            >
-              <div className="flex flex-col">
-                <span className="text-xs font-bold text-slate-200">{u.username}</span>
-                <span className="text-[9px] text-slate-500 mt-0.5">
-                  Created: {new Date(u.created_at).toLocaleDateString()}
-                </span>
-              </div>
-              <select
-                value={u.role}
-                onChange={(e) => onRoleChange(u.id, e.target.value)}
-                className="bg-slate-900 border border-slate-800 rounded-lg text-[10px] font-semibold px-2 py-1 text-slate-300 focus:outline-none cursor-pointer"
+          <motion.ul variants={stagger(0.03)} initial="hidden" animate="show" className="flex flex-col gap-1.5">
+            {adminUsers.map((u) => (
+              <motion.li
+                key={u.id}
+                variants={rowIn}
+                className="bg-raised/50 border-line flex items-center justify-between gap-2 rounded-xl border p-2.5"
               >
-                <option value="admin">Admin</option>
-                <option value="authority">Authority</option>
-                <option value="fleet">Fleet</option>
-              </select>
-            </div>
-          ))
+                <div className="flex min-w-0 flex-col gap-0.5">
+                  <span className="text-ink truncate text-[11px] font-medium">{u.username}</span>
+                  <span className="text-ink-3 tnum font-mono text-[9px]">
+                    {new Date(u.created_at).toLocaleDateString()}
+                  </span>
+                </div>
+                <select
+                  value={u.role}
+                  onChange={(e) => onRoleChange(u.id, e.target.value)}
+                  aria-label={`Role for ${u.username}`}
+                  className="bg-sunken border-line text-ink-2 focus:border-accent/50 h-6 shrink-0 cursor-pointer rounded-md border px-1.5 text-[10px] outline-none transition-colors"
+                >
+                  <option value="admin">Admin</option>
+                  <option value="authority">Authority</option>
+                  <option value="fleet">Fleet</option>
+                </select>
+              </motion.li>
+            ))}
+          </motion.ul>
         )}
       </div>
-    </section>
+    </Panel>
   );
 }
 
-// ─── SystemHealthPanel ────────────────────────────────────────────────────────
+/* ── System health ───────────────────────────────────────────────────────────
+   Real psutil metrics from GET /admin/system-health (B3-0).
+
+   The meters are sequential magnitude, so they take ONE hue each and stay in
+   interface ink until they actually matter: a utilisation bar only turns
+   warning/critical past 75/90%. A permanently-coloured bar is decoration; a bar
+   that changes colour is information.                                        */
 
 /**
- * SystemHealthPanel — real psutil metrics from GET /admin/system-health.
- * Updated in B3-0 to display real CPU / memory / disk / inference status.
+ * SystemHealthPanel — the live service probe.
+ *
+ * CPU / memory / disk / DB-pool used to be four little bar tiles in here. They
+ * are now radial gauges in AdminView, which reads far better at page width, so
+ * duplicating them as bars would just be the same four numbers twice. What is
+ * left is the part the gauges can't show: which service we are talking to,
+ * whether it answered, and how fast.
  */
 function SystemHealthPanel({ systemHealth }) {
   if (!systemHealth) return null;
-
-  const inferenceOk = systemHealth.inference_status === "ok";
+  const ok = systemHealth.inference_status === "ok";
 
   return (
-    <section
-      className="bg-slate-900/40 border border-slate-800/60 p-4 rounded-2xl flex flex-col gap-3.5 shrink-0"
-      data-testid="system-health"
-    >
-      <div className="flex items-center gap-2 text-xs font-bold text-slate-400 shrink-0">
-        <Server className="h-4 w-4 text-emerald-400" />
-        <span>SYSTEM INFRASTRUCTURE HEALTH</span>
-      </div>
-
-      <div className="grid grid-cols-2 gap-3">
-        {/* CPU */}
-        <div className="bg-slate-950/40 border border-slate-800/80 rounded-xl p-3 flex flex-col gap-1.5">
-          <div className="flex items-center justify-between text-[9px] uppercase font-bold text-slate-500">
-            <span>CPU LOAD</span>
-            <Cpu className="h-3 w-3 text-blue-400" />
+    <Panel title="Services" icon={Server} testId="system-health">
+      <div className="grid grid-cols-1 gap-2 lg:grid-cols-2">
+        <div className="bg-raised/50 border-line flex items-center justify-between gap-2 rounded-xl border p-3">
+          <div className="flex min-w-0 flex-col gap-0.5">
+            <span className="eyebrow">Inference service</span>
+            <span className="text-ink-3 truncate font-mono text-[10px]">
+              {systemHealth.inference_url}
+            </span>
           </div>
-          <span className="text-sm font-extrabold text-slate-200">
-            {systemHealth.cpu_usage_pct}%
-          </span>
-          <div className="w-full h-1.5 bg-slate-900 rounded-full overflow-hidden">
-            <div
-              className="h-full bg-blue-500 rounded-full"
-              style={{ width: `${Math.min(systemHealth.cpu_usage_pct, 100)}%` }}
-            />
+          <div className="flex shrink-0 items-center gap-2">
+            {systemHealth.inference_latency_ms != null && (
+              <span className="text-ink-3 tnum font-mono text-[10px]">
+                {systemHealth.inference_latency_ms} ms
+              </span>
+            )}
+            <Chip
+              className={
+                ok
+                  ? "bg-good/10 text-good border-good/25"
+                  : "bg-critical/10 text-critical border-critical/25"
+              }
+            >
+              <Zap className="h-2.5 w-2.5" />
+              {systemHealth.inference_status}
+            </Chip>
           </div>
         </div>
 
-        {/* Memory */}
-        <div className="bg-slate-950/40 border border-slate-800/80 rounded-xl p-3 flex flex-col gap-1.5">
-          <div className="flex items-center justify-between text-[9px] uppercase font-bold text-slate-500">
-            <span>MEMORY</span>
-            <Activity className="h-3 w-3 text-purple-400" />
-          </div>
-          <span className="text-sm font-extrabold text-slate-200">
-            {systemHealth.memory_usage_pct}%
-          </span>
-          <div className="w-full h-1.5 bg-slate-900 rounded-full overflow-hidden">
-            <div
-              className="h-full bg-purple-500 rounded-full"
-              style={{ width: `${Math.min(systemHealth.memory_usage_pct, 100)}%` }}
-            />
-          </div>
-        </div>
-
-        {/* DB connections */}
-        <div className="bg-slate-950/40 border border-slate-800/80 rounded-xl p-3 flex flex-col gap-1">
-          <span className="text-[9px] uppercase font-bold text-slate-500">DB CONNS</span>
-          <div className="flex items-baseline gap-1 mt-0.5">
-            <span className="text-sm font-extrabold text-slate-200">
-              {systemHealth.db_active_connections}
-            </span>
-            <span className="text-[10px] text-slate-500">
-              / {systemHealth.db_pool_size} pool
+        <div className="bg-raised/50 border-line flex items-center justify-between gap-2 rounded-xl border p-3">
+          <div className="flex min-w-0 flex-col gap-0.5">
+            <span className="eyebrow">Datastores</span>
+            <span className="text-ink-3 truncate font-mono text-[10px]">
+              postgres · redis · minio
             </span>
           </div>
-        </div>
-
-        {/* Disk */}
-        <div className="bg-slate-950/40 border border-slate-800/80 rounded-xl p-3 flex flex-col gap-1">
-          <div className="flex items-center justify-between text-[9px] uppercase font-bold text-slate-500">
-            <span>DISK</span>
-            <HardDrive className="h-3 w-3 text-slate-400" />
-          </div>
-          <div className="flex items-baseline gap-1 mt-0.5">
-            <span className="text-sm font-extrabold text-slate-200">
-              {systemHealth.disk_used_gb} GB
-            </span>
-            <span className="text-[10px] text-slate-500">
-              / {systemHealth.disk_total_gb} GB
-            </span>
-          </div>
-          <div className="w-full h-1.5 bg-slate-900 rounded-full overflow-hidden mt-0.5">
-            <div
-              className="h-full bg-slate-500 rounded-full"
-              style={{ width: `${Math.min(systemHealth.disk_usage_pct, 100)}%` }}
-            />
-          </div>
+          <Chip className="bg-good/10 text-good border-good/25">
+            <Database className="h-2.5 w-2.5" />
+            connected
+          </Chip>
         </div>
       </div>
-
-      {/* Inference status row */}
-      <div className="bg-slate-950/40 border border-slate-800/80 rounded-xl p-3 flex items-center justify-between text-xs">
-        <div className="flex flex-col gap-0.5">
-          <span className="text-[9px] uppercase font-bold text-slate-500">INFERENCE SERVICE</span>
-          <span className="text-slate-400 truncate max-w-[10rem]">{systemHealth.inference_url}</span>
-        </div>
-        <div className="flex flex-col items-end gap-0.5">
-          <span
-            className={`text-[10px] font-extrabold uppercase ${
-              inferenceOk ? "text-green-400" : "text-red-400"
-            }`}
-          >
-            {systemHealth.inference_status}
-          </span>
-          {systemHealth.inference_latency_ms !== null && (
-            <span className="text-[9px] text-slate-500">
-              {systemHealth.inference_latency_ms} ms
-            </span>
-          )}
-        </div>
-      </div>
-    </section>
+    </Panel>
   );
 }
 
-// ─── ModelRegistryPanel ───────────────────────────────────────────────────────
+/* ── Model registry ──────────────────────────────────────────────────────────
+   B3-4 live model registry. Fetches GET /admin/models on mount and on manual
+   refresh; each inactive row can be activated via POST /admin/models/{id}/activate.
 
-/**
- * ModelRegistryPanel — B3-4 live model registry.
- *
- * Fetches GET /admin/models on mount and on manual refresh.
- * Each inactive row has an Activate button → POST /admin/models/{id}/activate.
- * The active row is highlighted with a green ring.
- * Component manages its own data-fetching state so page.js stays clean.
- */
-/**
- * Person A's registry (ai/models.json) is explicit on two points: RDD test AP is
- * NOT comparable across versions (v3 was scored on India-only, v4 on all six
- * countries), and the real-footage numbers are the ship gate. So the headline
- * cell shows the real-footage hit rate and RDD AP is demoted to a labelled
- * secondary line carrying his own caveat — rendering his caveated number as a
- * bare "mAP50" would launder exactly the warning he attached to it.
- */
+   Person A's registry (ai/models.json) is explicit on two points: RDD test AP is
+   NOT comparable across versions (v3 was scored on India-only, v4 on all six
+   countries), and the real-footage numbers are the ship gate. So the headline
+   cell shows the real-footage hit rate and RDD AP is demoted to a labelled
+   secondary line carrying his own caveat — rendering his caveated number as a
+   bare "mAP50" would launder exactly the warning he attached to it.          */
+
 function getShipGate(metrics) {
   return metrics?.real_footage_pothole_frames_hit ?? null;
 }
@@ -226,9 +175,7 @@ function ModelRegistryPanel() {
   // handler, where setState is unrestricted.
   const fetchModels = useCallback(async () => {
     try {
-      const res = await fetch(`${BACKEND_URL}/admin/models`, {
-        credentials: "include",
-      });
+      const res = await fetch(`${BACKEND_URL}/admin/models`, { credentials: "include" });
       if (!res.ok) throw new Error(`Server returned HTTP ${res.status}`);
       setModels(await res.json());
       setError(null);
@@ -244,16 +191,18 @@ function ModelRegistryPanel() {
     // effect body. Paired with fetchModels() being await-first, no state is
     // written synchronously during the effect — which is what
     // react-hooks/set-state-in-effect is guarding against.
-    (async () => { await fetchModels(); })();
+    (async () => {
+      await fetchModels();
+    })();
   }, [fetchModels]);
 
   const handleActivate = async (modelId) => {
     try {
       setActivating(modelId);
-      const res = await fetch(
-        `${BACKEND_URL}/admin/models/${modelId}/activate`,
-        { method: "POST", credentials: "include" }
-      );
+      const res = await fetch(`${BACKEND_URL}/admin/models/${modelId}/activate`, {
+        method: "POST",
+        credentials: "include",
+      });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.detail || `HTTP ${res.status}`);
@@ -291,237 +240,181 @@ function ModelRegistryPanel() {
   };
 
   return (
-    <section
-      className="bg-slate-900/40 border border-slate-800/60 p-4 rounded-2xl flex flex-col gap-3 shrink-0"
-      data-testid="model-registry"
-    >
-      {/* ── Header ── */}
-      <div className="flex items-center justify-between shrink-0">
-        <div className="flex items-center gap-2 text-xs font-bold text-slate-400">
-          <Compass className="h-4 w-4 text-blue-400" />
-          <span>AI MODEL REGISTRY</span>
-        </div>
-        <div className="flex items-center gap-3">
-          <button
+    <Panel
+      title="Model registry"
+      icon={Boxes}
+      count={models.length || undefined}
+      testId="model-registry"
+      className="flex min-h-0 flex-col"
+      bodyClassName="min-h-0"
+      actions={
+        <>
+          <motion.button
+            type="button"
+            id="sync-model-registry"
             onClick={handleSync}
             disabled={syncing || loading}
-            className="flex items-center gap-1 text-[10px] font-semibold text-blue-400 hover:text-blue-300 transition disabled:opacity-40 cursor-pointer"
+            whileTap={{ scale: 0.94 }}
+            transition={T.fast}
             title="Import versions from ai/models.json (Person A's registry)"
-            id="sync-model-registry"
+            className="bg-accent/10 border-accent/25 text-accent hover:bg-accent/20 flex cursor-pointer items-center gap-1 rounded-md border px-2 py-1 text-[10px] font-medium transition-colors disabled:opacity-40"
           >
-            <PackageCheck className={`h-3 w-3 ${syncing ? "animate-pulse" : ""}`} />
+            <PackageCheck className={`h-2.5 w-2.5 ${syncing ? "animate-breathe" : ""}`} />
             {syncing ? "Syncing…" : "Sync"}
-          </button>
-          <button
-            onClick={() => { setLoading(true); fetchModels(); }}
-            disabled={loading}
-            className="flex items-center gap-1 text-[10px] font-semibold text-slate-500 hover:text-slate-300 transition disabled:opacity-40 cursor-pointer"
-            title="Refresh model list"
+          </motion.button>
+          <motion.button
+            type="button"
             id="refresh-model-registry"
+            onClick={() => {
+              setLoading(true);
+              fetchModels();
+            }}
+            disabled={loading}
+            whileTap={{ scale: 0.94 }}
+            transition={T.fast}
+            title="Refresh model list"
+            className="bg-raised border-line text-ink-3 hover:text-ink flex cursor-pointer items-center gap-1 rounded-md border px-2 py-1 text-[10px] font-medium transition-colors disabled:opacity-40"
           >
-            <RefreshCw className={`h-3 w-3 ${loading ? "animate-spin text-blue-400" : ""}`} />
+            <RefreshCw className={`h-2.5 w-2.5 ${loading ? "animate-spin" : ""}`} />
             Refresh
-          </button>
-        </div>
-      </div>
-
-      {/* ── Error banner ── */}
+          </motion.button>
+        </>
+      }
+    >
       {error && (
-        <div className="flex items-center gap-2 bg-red-950/40 border border-red-500/30 rounded-xl px-3 py-2 text-[10px] text-red-400">
-          <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-          {error}
+        <div className="bg-critical/10 border-critical/30 text-critical mb-2 flex items-center gap-2 rounded-lg border px-2.5 py-2 text-[10px]">
+          <AlertCircle className="h-3 w-3 shrink-0" />
+          <span className="min-w-0 flex-1">{error}</span>
         </div>
       )}
 
-      {/* ── Model list ── */}
-      <div className="flex flex-col gap-2 max-h-[22rem] overflow-y-auto custom-scrollbar pr-1">
-        {/* Loading state */}
+      <div className="custom-scrollbar -mx-1 max-h-[22rem] min-h-0 overflow-y-auto px-1">
         {loading && models.length === 0 && (
-          <div className="flex items-center justify-center py-6 text-slate-600 text-xs gap-2">
-            <RefreshCw className="h-4 w-4 animate-spin" />
-            Loading registry…
+          <div className="flex flex-col gap-1.5">
+            {[0, 1].map((i) => (
+              <Skeleton key={i} className="h-24 w-full" />
+            ))}
           </div>
         )}
 
-        {/* Empty state */}
         {!loading && models.length === 0 && (
-          <div className="flex flex-col items-center justify-center py-6 gap-2 text-center">
-            <PackageCheck className="h-8 w-8 text-slate-700" />
-            <p className="text-xs text-slate-600">No models registered yet.</p>
-            <p className="text-[10px] text-slate-700 max-w-[16rem]">
-              Hit <span className="text-blue-400 font-semibold">Sync</span> to import
-              Person A&apos;s published versions from{" "}
-              <code className="bg-slate-800 px-1 rounded text-slate-400">
-                ai/models.json
-              </code>
-              , or register one by hand with{" "}
-              <code className="bg-slate-800 px-1 rounded text-slate-400">
-                POST /admin/models
-              </code>
-              .
-            </p>
-          </div>
+          <EmptyState
+            icon={PackageCheck}
+            title="No models registered"
+            hint="Hit Sync to import Person A's published versions from ai/models.json, or register one by hand with POST /admin/models."
+          />
         )}
 
-        {/* Model rows */}
-        {models.map((m) => (
-          <div
-            key={m.id}
-            className={`rounded-xl p-3 border flex flex-col gap-2 transition ${
-              m.is_active
-                ? "bg-emerald-950/30 border-emerald-500/40 ring-1 ring-emerald-500/20"
-                : "bg-slate-950/40 border-slate-800/80"
-            }`}
-          >
-            {/* Top row: version + badge/button */}
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2 min-w-0">
-                {m.is_active && (
-                  <CheckCircle className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
-                )}
-                <span
-                  className={`text-xs font-bold truncate ${
-                    m.is_active ? "text-emerald-300" : "text-slate-200"
-                  }`}
-                  title={m.version}
-                >
-                  {m.version}
-                </span>
-              </div>
-
-              {m.is_active ? (
-                <span className="text-[9px] font-extrabold uppercase tracking-wider text-emerald-400 bg-emerald-950/60 border border-emerald-500/30 px-2 py-0.5 rounded-full shrink-0">
-                  ACTIVE
-                </span>
-              ) : (
-                <button
-                  onClick={() => handleActivate(m.id)}
-                  disabled={activating === m.id}
-                  className="text-[9px] font-extrabold uppercase tracking-wider text-blue-400 bg-blue-950/50 border border-blue-500/30 px-2 py-0.5 rounded-full shrink-0 hover:bg-blue-900/60 hover:text-blue-300 transition cursor-pointer disabled:opacity-50"
-                  id={`activate-model-${m.id}`}
-                >
-                  {activating === m.id ? "…" : "Activate"}
-                </button>
-              )}
-            </div>
-
-            {/* Metrics row — real footage is the ship gate, not RDD AP */}
-            <div className="grid grid-cols-3 gap-2 text-[9px]">
-              <div className="flex flex-col">
-                <span className="text-slate-600 uppercase font-bold">Classes</span>
-                <span
-                  className="text-slate-300 font-semibold mt-0.5 truncate"
-                  title={(m.classes || []).join(", ")}
-                >
-                  {(m.classes || []).length} class
-                  {(m.classes || []).length !== 1 ? "es" : ""}
-                </span>
-              </div>
-              <div className="flex flex-col">
-                <span className="text-slate-600 uppercase font-bold">Conf</span>
-                <span className="text-slate-300 font-semibold mt-0.5">
-                  {typeof m.conf_threshold === "number"
-                    ? m.conf_threshold.toFixed(2)
-                    : "—"}
-                </span>
-              </div>
-              <div className="flex flex-col">
-                <span
-                  className="text-slate-600 uppercase font-bold"
-                  title="Pothole frames hit on real footage — the ship gate"
-                >
-                  Real footage
-                </span>
-                <span
-                  className="text-slate-300 font-semibold mt-0.5 truncate"
-                  title={
-                    m.metrics?.real_footage_false_positives
-                      ? `${getShipGate(m.metrics)} frames hit · ${m.metrics.real_footage_false_positives} false positives`
-                      : undefined
-                  }
-                >
-                  {getShipGate(m.metrics) ?? "—"}
-                </span>
-              </div>
-            </div>
-
-            {/* RDD AP — deliberately secondary and caveated (see getShipGate) */}
-            {getRddAp(m.metrics) != null && (
-              <div
-                className="text-[9px] text-slate-600"
-                title={
-                  m.metrics?._note ||
-                  "RDD test AP is not comparable across versions — different test splits."
-                }
+        {models.length > 0 && (
+          <motion.ul variants={stagger(0.04)} initial="hidden" animate="show" className="flex flex-col gap-1.5">
+            {models.map((m) => (
+              <motion.li
+                key={m.id}
+                variants={rowIn}
+                className={`flex flex-col gap-2 rounded-xl border p-2.5 transition-colors ${
+                  m.is_active ? "border-good/35 bg-good/5" : "border-line bg-raised/50"
+                }`}
               >
-                RDD test mAP50{" "}
-                <span className="text-slate-500 font-semibold">
-                  {getRddAp(m.metrics).toFixed(3)}
-                </span>
-                <span className="italic"> · not comparable across versions</span>
-              </div>
-            )}
+                {/* Version + activation */}
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex min-w-0 items-center gap-1.5">
+                    {m.is_active && <CheckCircle2 className="text-good h-3 w-3 shrink-0" />}
+                    <span
+                      className={`truncate font-mono text-[11px] font-medium ${
+                        m.is_active ? "text-good" : "text-ink"
+                      }`}
+                      title={m.version}
+                    >
+                      {m.version}
+                    </span>
+                  </div>
+                  {m.is_active ? (
+                    <Chip className="bg-good/10 text-good border-good/25 uppercase">Active</Chip>
+                  ) : (
+                    <motion.button
+                      type="button"
+                      id={`activate-model-${m.id}`}
+                      onClick={() => handleActivate(m.id)}
+                      disabled={activating === m.id}
+                      whileTap={{ scale: 0.94 }}
+                      transition={T.fast}
+                      className="bg-accent/10 border-accent/25 text-accent hover:bg-accent/20 shrink-0 cursor-pointer rounded-full border px-2 py-0.5 text-[10px] font-semibold transition-colors disabled:opacity-50"
+                    >
+                      {activating === m.id ? "…" : "Activate"}
+                    </motion.button>
+                  )}
+                </div>
 
-            {/* Class pills */}
-            {(m.classes || []).length > 0 && (
-              <div className="flex flex-wrap gap-1">
-                {(m.classes || []).map((cls) => (
-                  <span
-                    key={cls}
-                    className="text-[8px] font-semibold bg-slate-800/80 border border-slate-700/60 text-slate-400 px-1.5 py-0.5 rounded-full"
+                {/* Metrics — real footage is the ship gate, not RDD AP */}
+                <div className="grid grid-cols-3 gap-2">
+                  <Cell label="Classes" value={`${(m.classes || []).length}`} title={(m.classes || []).join(", ")} />
+                  <Cell
+                    label="Conf"
+                    value={typeof m.conf_threshold === "number" ? m.conf_threshold.toFixed(2) : "—"}
+                  />
+                  <Cell
+                    label="Real footage"
+                    value={getShipGate(m.metrics) ?? "—"}
+                    title={
+                      m.metrics?.real_footage_false_positives != null
+                        ? `${getShipGate(m.metrics)} frames hit · ${m.metrics.real_footage_false_positives} false positives`
+                        : "Pothole frames hit on real footage — the ship gate"
+                    }
+                  />
+                </div>
+
+                {/* RDD AP — deliberately secondary and caveated (see getShipGate) */}
+                {getRddAp(m.metrics) != null && (
+                  <p
+                    className="text-ink-3 text-[9px]"
+                    title={
+                      m.metrics?._note ||
+                      "RDD test AP is not comparable across versions — different test splits."
+                    }
                   >
-                    {cls.replace(/_/g, " ")}
-                  </span>
-                ))}
-              </div>
-            )}
+                    RDD test mAP50{" "}
+                    <span className="text-ink-2 font-mono">{getRddAp(m.metrics).toFixed(3)}</span>
+                    <span className="italic"> · not comparable across versions</span>
+                  </p>
+                )}
 
-            {/* Footer: date + notes */}
-            <span className="text-[9px] text-slate-600">
-              Registered {new Date(m.registered_at).toLocaleDateString()}
-              {m.notes && (
-                <span className="ml-2 italic" title={m.notes}>
-                  · {m.notes.slice(0, 60)}
-                  {m.notes.length > 60 ? "…" : ""}
-                </span>
-              )}
-            </span>
-          </div>
-        ))}
+                {/* Class pills — neutral: class identity never wears hue */}
+                {(m.classes || []).length > 0 && (
+                  <div className="flex flex-wrap gap-1">
+                    {(m.classes || []).map((cls) => (
+                      <Chip key={cls} className="bg-sunken text-ink-3">
+                        {cls.replace(/_/g, " ")}
+                      </Chip>
+                    ))}
+                  </div>
+                )}
+
+                <p className="text-ink-3 text-[9px]">
+                  Registered {new Date(m.registered_at).toLocaleDateString()}
+                  {m.notes && (
+                    <span className="italic" title={m.notes}>
+                      {" · "}
+                      {m.notes.slice(0, 60)}
+                      {m.notes.length > 60 ? "…" : ""}
+                    </span>
+                  )}
+                </p>
+              </motion.li>
+            ))}
+          </motion.ul>
+        )}
       </div>
-    </section>
+    </Panel>
   );
 }
 
-// ─── AdminDashboard (default export) ─────────────────────────────────────────
-
-/**
- * AdminDashboard — user registry + real system health + live model registry + upload.
- *
- * Props:
- *   adminUsers    — array of user objects from GET /admin/users
- *   systemHealth  — object from GET /admin/system-health
- *   onRoleChange  — (userId, newRole) => void
- *   onUpload      — file input change handler
- *   uploading     — boolean upload-in-progress flag
- *
- * ModelRegistryPanel manages its own data-fetching via useEffect so this
- * component receives no extra props for B3-4.
- */
-export default function AdminDashboard({
-  adminUsers,
-  systemHealth,
-  onRoleChange,
-  onUpload,
-  uploading,
-}) {
+function Cell({ label, value, title }) {
   return (
-    <>
-      <UserDirectory adminUsers={adminUsers} onRoleChange={onRoleChange} />
-      <SystemHealthPanel systemHealth={systemHealth} />
-      {/* B3-4: live model registry — self-fetching, no extra props needed */}
-      <ModelRegistryPanel />
-      <UploadPanel onUpload={onUpload} uploading={uploading} />
-    </>
+    <div className="flex flex-col gap-0.5" title={title}>
+      <span className="eyebrow truncate">{label}</span>
+      <span className="text-ink-2 truncate font-mono text-[11px] font-medium">{value}</span>
+    </div>
   );
 }
+
+export { UserDirectory, SystemHealthPanel, ModelRegistryPanel };

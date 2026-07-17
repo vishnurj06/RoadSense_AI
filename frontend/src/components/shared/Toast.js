@@ -1,36 +1,60 @@
 "use client";
 
 import React from "react";
-import { AlertTriangle, CheckCircle, Activity } from "lucide-react";
+import { motion, AnimatePresence } from "motion/react";
+import { AlertTriangle, CheckCircle2, Info } from "lucide-react";
+import { toastIn } from "@/lib/motion";
 
 /**
- * Toast — fixed bottom-right notification badge.
+ * Toast — transient confirmation, bottom-centre.
  *
- * Props:
- *   toast: { message: string, type: "success" | "error" | "info" } | null
+ * Moved off the bottom-right corner: that corner now sits over the map, where
+ * a dark chip on dark tiles is easy to miss. Centre-bottom is in the reading
+ * path and clear of the panel column.
+ *
+ * The timer bar is not decoration — it shows how long you have left to read it.
  */
-export default function Toast({ toast }) {
-  if (!toast) return null;
+const VARIANTS = {
+  success: { icon: CheckCircle2, ring: "border-good/35", tint: "text-good", bar: "bg-good" },
+  error: {
+    icon: AlertTriangle,
+    ring: "border-critical/35",
+    tint: "text-critical",
+    bar: "bg-critical",
+  },
+  info: { icon: Info, ring: "border-accent/35", tint: "text-accent", bar: "bg-accent" },
+};
+
+export default function Toast({ toast, duration = 4 }) {
+  const v = VARIANTS[toast?.type] || VARIANTS.info;
+  const Icon = v.icon;
 
   return (
-    <div
-      data-testid="toast"
-      className={`fixed bottom-6 right-6 z-50 flex items-center gap-3 px-4 py-3 rounded-xl shadow-lg border border-slate-800/80 backdrop-blur-md transition-all duration-300 ${
-        toast.type === "success"
-          ? "bg-green-950/90 border-green-500/30 text-green-300"
-          : toast.type === "error"
-          ? "bg-red-950/90 border-red-500/30 text-red-300"
-          : "bg-slate-900/90 border-slate-800 text-slate-300"
-      }`}
-    >
-      {toast.type === "success" ? (
-        <CheckCircle className="h-5 w-5 text-green-400 shrink-0" />
-      ) : toast.type === "error" ? (
-        <AlertTriangle className="h-5 w-5 text-red-400 shrink-0" />
-      ) : (
-        <Activity className="h-5 w-5 text-blue-400 shrink-0" />
+    <AnimatePresence>
+      {toast && (
+        <motion.div
+          data-testid="toast"
+          role="status"
+          aria-live="polite"
+          variants={toastIn}
+          initial="hidden"
+          animate="show"
+          exit="exit"
+          className={`bg-surface/95 pointer-events-none fixed bottom-6 left-1/2 z-[60] w-max max-w-[90vw] -translate-x-1/2 overflow-hidden rounded-xl border shadow-2xl backdrop-blur-xl ${v.ring}`}
+        >
+          <div className="flex items-center gap-2.5 px-3.5 py-2.5">
+            <Icon className={`h-4 w-4 shrink-0 ${v.tint}`} />
+            <span className="text-ink text-[12px] font-medium">{toast.message}</span>
+          </div>
+          <motion.div
+            key={toast.message}
+            className={`h-0.5 ${v.bar} opacity-50`}
+            initial={{ width: "100%" }}
+            animate={{ width: "0%" }}
+            transition={{ duration, ease: "linear" }}
+          />
+        </motion.div>
       )}
-      <span className="text-xs font-semibold">{toast.message}</span>
-    </div>
+    </AnimatePresence>
   );
 }

@@ -760,25 +760,37 @@ def get_map_geojson(
 
     issues = db.query(models.Issue).all()
 
+    # ── N+1 elimination ──────────────────────────────────────────────────────
+    # This loop used to fire THREE queries per issue (latest report, distinct
+    # GPS sources, lazy-loaded detections). At ~9.5k issues that is ~28,500
+    # round-trips and ~2.5 s per /map — slow enough that the browser choked on
+    # the response and the map rendered nothing, which read as "the backend is
+    # disconnected." All of it is now pre-computed in TWO queries below.
+    from sqlalchemy.orm import joinedload
+
+    reports = (
+        db.query(models.Report)
+        .filter(models.Report.issue_id.isnot(None))
+        .options(joinedload(models.Report.detections))
+        .order_by(models.Report.timestamp.desc())
+        .all()
+    )
+
+    latest_by_issue = {}  # issue_id → newest Report (first seen wins: desc order)
+    sources_by_issue = {}  # issue_id → set of gps_source values across the cluster
+    for r in reports:
+        if r.issue_id not in latest_by_issue:
+            latest_by_issue[r.issue_id] = r
+        sources_by_issue.setdefault(r.issue_id, set()).add(r.gps_source)
+
     features = []
     for issue in issues:
-        # Get detections from the latest associated report to display
-        latest_report = (
-            db.query(models.Report)
-            .filter(models.Report.issue_id == issue.id)
-            .order_by(models.Report.timestamp.desc())
-            .first()
-        )
+        latest_report = latest_by_issue.get(issue.id)
 
         # B3-6: an Issue clusters many Reports. Provenance must fail closed —
         # if any contributing report carries faked GPS, the pin is unverified,
         # regardless of what the latest report happens to say.
-        cluster_sources = {
-            s
-            for (s,) in db.query(models.Report.gps_source)
-            .filter(models.Report.issue_id == issue.id)
-            .distinct()
-        }
+        cluster_sources = sources_by_issue.get(issue.id, set())
         if "faked" in cluster_sources or None in cluster_sources:
             issue_gps_source = "faked" if "faked" in cluster_sources else None
         else:
