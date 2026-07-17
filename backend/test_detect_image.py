@@ -107,6 +107,78 @@ def test_detect_image_success(mock_post, mock_s3, client):
     return_value="http://minio/roadsense/test.jpg",
 )
 @patch("httpx.AsyncClient.post", new_callable=AsyncMock)
+def test_web_upload_gps_provenance_is_faked_end_to_end(mock_post, mock_s3, client):
+    """B3-6 regression: a web-UI upload carries no GPS provenance, so it must be
+    recorded AND SERVED as `faked`.
+
+    The original bug was not in the write path — /detect-image already stored
+    "faked". GET /map simply omitted gps_source from its GeoJSON properties, so
+    the browser saw `undefined` and defaulted it to "exif", rendering a faked
+    pin as "✓ GPS VERIFIED". This asserts the field survives all the way to the
+    map payload, which is where it actually broke.
+    """
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {
+        "model_version": "roadsense-stub-v2",
+        "image": {"width": 640, "height": 480},
+        "inference_ms": 15,
+        "detections": [
+            {
+                "class": "pothole",
+                "confidence": 0.91,
+                "bbox": [10.0, 10.0, 50.0, 50.0],
+                "severity": "high",
+            }
+        ],
+    }
+    mock_post.return_value = mock_response
+
+    img = Image.new("RGB", (640, 480), color="green")
+    img_byte_arr = io.BytesIO()
+    img.save(img_byte_arr, format="JPEG")
+    img_byte_arr.seek(0)
+
+    # Exactly what the "Demo Telemetry Upload" panel sends: no gps_source field.
+    files = {"file": ("google_image.jpg", img_byte_arr, "image/jpeg")}
+    data = {
+        "latitude": 18.5204,
+        "longitude": 73.8567,
+        "vehicle_id": "demo-web-upload",
+    }
+
+    response = client.post("/detect-image", files=files, data=data)
+    assert response.status_code == 201
+    report = response.json()
+
+    # 1. The write path defaults to faked.
+    assert report["gps_source"] == "faked"
+
+    # 2. The read path the map actually consumes must preserve it.
+    map_res = client.get("/map")
+    assert map_res.status_code == 200
+    features = map_res.json()["features"]
+    uploaded = [
+        f
+        for f in features
+        if abs(f["geometry"]["coordinates"][0] - 73.8567) < 0.001
+    ]
+    assert uploaded, "uploaded report did not appear on /map"
+    props = uploaded[0]["properties"]
+    assert "gps_source" in props, "/map dropped gps_source — B3-6 regression"
+    assert props["gps_source"] == "faked"
+
+    # B3-5: the enrichment field must be present in the payload too. The value
+    # is populated asynchronously by the background task, so assert on the key
+    # (the popup reads it) rather than on a resolved road name.
+    assert "road_name" in props, "/map dropped road_name — B3-5 regression"
+
+
+@patch(
+    "s3_storage.upload_image_bytes_to_s3",
+    return_value="http://minio/roadsense/test.jpg",
+)
+@patch("httpx.AsyncClient.post", new_callable=AsyncMock)
 def test_detect_image_inference_down(mock_post, mock_s3, client):
     # Setup mock exception for unreachable inference service
     import httpx

@@ -1,63 +1,91 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+/**
+ * page.js — Dashboard orchestrator (Person B · RoadSense AI · Phase 3)
+ *
+ * Responsibility: auth guard, data fetching, shared state.
+ * All rendering is delegated to role-specific dashboard components.
+ * This file must stay under ~150 lines. If it grows, extract more.
+ */
+
+import React, { useState, useEffect, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
-import {
-  Activity,
-  AlertTriangle,
-  MapPin,
-  Upload,
-  RefreshCw,
-  Sliders,
-  Calendar,
-  Car,
-  CheckCircle,
-  FileSpreadsheet,
-  Shield,
-  Users,
-  Server,
-  HardDrive,
-  Cpu,
-  Compass
-} from "lucide-react";
-import {
-  ResponsiveContainer,
-  AreaChart,
-  Area,
-  XAxis,
-  YAxis,
-  Tooltip as ChartTooltip,
-  PieChart,
-  Pie,
-  Cell
-} from "recharts";
+import { Activity, AlertTriangle, RefreshCw } from "lucide-react";
 
-// Dynamically load MapComponent with SSR disabled
-const MapComponent = dynamic(
-  () => import("@/components/MapComponent"),
-  { 
-    ssr: false,
-    loading: () => (
-      <div className="w-full h-full rounded-2xl bg-slate-900 border border-slate-800 flex flex-col items-center justify-center text-slate-400 gap-3">
-        <RefreshCw className="animate-spin h-8 w-8 text-blue-500" />
-        <p className="text-sm font-medium">Loading Interactive Map...</p>
-      </div>
-    )
-  }
-);
+import StatCards from "@/components/shared/StatCards";
+import Toast from "@/components/shared/Toast";
+import AuthorityDashboard from "@/components/dashboards/AuthorityDashboard";
+import FleetDashboard from "@/components/dashboards/FleetDashboard";
+import AdminDashboard from "@/components/dashboards/AdminDashboard";
+import { getMaxSeverity } from "@/lib/classUtils";
+import { isRealGps } from "@/lib/gpsUtils";
+import { mapFeaturesToIssues } from "@/lib/mapUtils";
+
+// Leaflet map — SSR disabled (window is not defined on server)
+const MapComponent = dynamic(() => import("@/components/MapComponent"), {
+  ssr: false,
+  loading: () => (
+    <div className="w-full h-full rounded-2xl bg-slate-900 border border-slate-800 flex flex-col items-center justify-center text-slate-400 gap-3">
+      <RefreshCw className="animate-spin h-8 w-8 text-blue-500" />
+      <p className="text-sm font-medium">Loading Interactive Map...</p>
+    </div>
+  ),
+});
 
 const BACKEND_URL = "http://localhost:8000";
 
+// ─── Hydration guard ──────────────────────────────────────────────────────────
+
+/**
+ * `user` is read from localStorage, so it is null on the server and populated on
+ * the client — rendering user-dependent UI on the first client pass would be a
+ * hydration mismatch. This reports false during SSR *and* during hydration, then
+ * flips to true once mounted, matching the server output exactly when it counts.
+ *
+ * Previously this was `useState(false)` + `useEffect(() => setMounted(true))`,
+ * which sets state synchronously inside an effect and causes the cascading
+ * re-render that react-hooks/set-state-in-effect exists to prevent.
+ */
+const subscribeToNothing = () => () => {};
+const useIsHydrated = () =>
+  useSyncExternalStore(
+    subscribeToNothing,
+    () => true,  // client snapshot — after hydration
+    () => false, // server snapshot — during SSR and hydration
+  );
+
+// ─── Filtering helpers ────────────────────────────────────────────────────────
+
+function applyFilters(items, severityFilter, classFilter, statusFilter, realGpsOnly) {
+  return items.filter((item) => {
+    // B3-6: "real GPS only" must fail closed — unknown provenance is not real.
+    if (realGpsOnly && !isRealGps(item.gps_source)) return false;
+    const maxSev = getMaxSeverity(item.detections);
+    if (!severityFilter[maxSev]) return false;
+    if (classFilter !== "all") {
+      const classes = item.detections?.map((d) => (d.class || "").toLowerCase()) || [];
+      if (!classes.includes(classFilter)) return false;
+    }
+    if (statusFilter !== "all") {
+      if ((item.status || "detected").toLowerCase() !== statusFilter) return false;
+    }
+    return true;
+  });
+}
+
+// ─── Main component ───────────────────────────────────────────────────────────
+
 export default function Dashboard() {
   const router = useRouter();
-  const [user, setUser] = useState(() => {
-    // Lazy initializer: read once at mount (client-only, safe in "use client" component)
+  const [user] = useState(() => {
     if (typeof window === "undefined") return null;
     const saved = localStorage.getItem("user");
     return saved ? JSON.parse(saved) : null;
   });
-  const [mounted, setMounted] = useState(false);
+  const mounted = useIsHydrated();
+
+  // Core data
   const [reports, setReports] = useState([]);
   const [mapIssues, setMapIssues] = useState([]);
   const [analytics, setAnalytics] = useState({
@@ -65,57 +93,58 @@ export default function Dashboard() {
     total_detections: 0,
     severity_distribution: { high: 0, medium: 0, low: 0 },
     class_distribution: {},
-    time_series: []
+    time_series: [],
   });
+  const [roadHealthSegments, setRoadHealthSegments] = useState([]);
+  const [showRoadHealth, setShowRoadHealth] = useState(false);
+  const [reportPage, setReportPage] = useState(1);
+  const [totalReports, setTotalReports] = useState(0);
+
+  // Admin-only extras
+  const [adminUsers, setAdminUsers] = useState([]);
+  const [systemHealth, setSystemHealth] = useState(null);
+
+  // UI state
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState(null);
   const [toast, setToast] = useState(null);
 
-  // Admin Dashboard stats
-  const [adminUsers, setAdminUsers] = useState([]);
-  const [systemHealth, setSystemHealth] = useState(null);
-
-  const [reportPage, setReportPage] = useState(1);
-  const [totalReports, setTotalReports] = useState(0);
+  // Filters
+  const [severityFilter, setSeverityFilter] = useState({ high: true, medium: true, low: true });
+  const [classFilter, setClassFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [realGpsOnly, setRealGpsOnly] = useState(false);
 
   const showToast = (message, type = "info") => {
     setToast({ message, type });
-    setTimeout(() => {
-      setToast(null);
-    }, 4000);
+    setTimeout(() => setToast(null), 4000);
   };
 
+  // ── Data fetching ───────────────────────────────────────────────────────────
 
-  // Filters State
-  const [severityFilter, setSeverityFilter] = useState({
-    high: true,
-    medium: true,
-    low: true
-  });
-  const [classFilter, setClassFilter] = useState("all");
-  const [statusFilter, setStatusFilter] = useState("all");
-
+  // Deliberately performs no *synchronous* setState — every write happens after
+  // an await — so the mount effect can call it directly without cascading
+  // renders (react-hooks/set-state-in-effect). `loading` starts true for the
+  // initial load. User-initiated refreshes go through refresh() below to get the
+  // spinner immediately; setState is unrestricted inside an event handler.
   const fetchData = async (currentUser = null, targetPage = null) => {
     try {
-      setLoading(true);
-      setError(null);
-
       const activeUser = currentUser || user;
       const pageToFetch = targetPage !== null ? targetPage : reportPage;
-      
-      const [reportsRes, analyticsRes, mapRes] = await Promise.all([
+
+      const [reportsRes, analyticsRes, mapRes, roadHealthRes] = await Promise.all([
         fetch(`${BACKEND_URL}/reports?page=${pageToFetch}&limit=10`, { credentials: "include" }),
         fetch(`${BACKEND_URL}/analytics`, { credentials: "include" }),
-        fetch(`${BACKEND_URL}/map`, { credentials: "include" })
+        fetch(`${BACKEND_URL}/map`, { credentials: "include" }),
+        fetch(`${BACKEND_URL}/analytics/road-health`, { credentials: "include" }),
       ]);
 
-      if (reportsRes.status === 401 || analyticsRes.status === 401 || mapRes.status === 401) {
+      if ([reportsRes, analyticsRes, mapRes, roadHealthRes].some((r) => r.status === 401)) {
         localStorage.removeItem("user");
         router.push("/login");
         return;
       }
-
       if (!reportsRes.ok || !analyticsRes.ok || !mapRes.ok) {
         throw new Error("Failed to fetch dashboard data from backend server.");
       }
@@ -123,60 +152,58 @@ export default function Dashboard() {
       const reportsData = await reportsRes.json();
       const analyticsData = await analyticsRes.json();
       const mapGeoJson = await mapRes.json();
+      const roadHealthData = await roadHealthRes.json();
 
+      setError(null);
       setReports(reportsData.reports || []);
       setTotalReports(reportsData.total || 0);
-      if (targetPage !== null) {
-        setReportPage(targetPage);
-      }
+      if (targetPage !== null) setReportPage(targetPage);
       setAnalytics(analyticsData);
+      setRoadHealthSegments(roadHealthData.segments || []);
+      setMapIssues(mapFeaturesToIssues(mapGeoJson));
 
-      // Flatten GeoJSON features to issue objects that MapComponent renders directly
-      const issues = mapGeoJson.features.map(f => ({
-        id: f.properties.report_id,
-        latitude: f.geometry.coordinates[1],
-        longitude: f.geometry.coordinates[0],
-        vehicle_id: f.properties.vehicle_id,
-        timestamp: f.properties.timestamp,
-        image_url: f.properties.image_url,
-        detection_count: f.properties.detection_count,
-        detections: f.properties.detections,
-        speed_kmph: f.properties.speed_kmph,
-        model_version: f.properties.model_version,
-        status: f.properties.status
-      }));
-      setMapIssues(issues);
-
-      // Fetch admin users and stats if the user role is admin
-      if (activeUser && activeUser.role === "admin") {
+      if (activeUser?.role === "admin") {
         const [usersRes, healthRes] = await Promise.all([
           fetch(`${BACKEND_URL}/admin/users`, { credentials: "include" }),
-          fetch(`${BACKEND_URL}/admin/system-health`, { credentials: "include" })
+          fetch(`${BACKEND_URL}/admin/system-health`, { credentials: "include" }),
         ]);
         if (usersRes.ok && healthRes.ok) {
-          const usersData = await usersRes.json();
-          const healthData = await healthRes.json();
-          setAdminUsers(usersData);
-          setSystemHealth(healthData);
+          setAdminUsers(await usersRes.json());
+          setSystemHealth(await healthRes.json());
         }
       }
     } catch (err) {
       console.error(err);
-      setError("Backend connection offline. Make sure the FastAPI server is running on http://localhost:8000.");
+      setError("Backend offline. Ensure the FastAPI server is running on http://localhost:8000.");
     } finally {
       setLoading(false);
     }
   };
 
+  /**
+   * User-initiated refresh: raise the spinner immediately, then refetch. Safe to
+   * setState here because this only ever runs from an event handler, never from
+   * an effect.
+   */
+  const refresh = (targetPage = null) => {
+    setLoading(true);
+    setError(null);
+    return fetchData(null, targetPage);
+  };
+
+  useEffect(() => {
+    if (!user) { router.push("/login"); return; }
+    // Async work, not a synchronous call: fetchData is await-first, so nothing
+    // is written to state during the effect itself.
+    (async () => { await fetchData(user); })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── Handlers ────────────────────────────────────────────────────────────────
+
   const handleLogout = async () => {
-    try {
-      await fetch(`${BACKEND_URL}/auth/logout`, {
-        method: "POST",
-        credentials: "include",
-      });
-    } catch (e) {
-      console.error("Logout request failed:", e);
-    }
+    try { await fetch(`${BACKEND_URL}/auth/logout`, { method: "POST", credentials: "include" }); }
+    catch (e) { console.error("Logout failed:", e); }
     localStorage.removeItem("user");
     router.push("/login");
   };
@@ -187,18 +214,11 @@ export default function Dashboard() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ issue_id: issueId, status: nextStatus }),
-        credentials: "include"
+        credentials: "include",
       });
-      if (res.ok) {
-        showToast(`Issue status updated to ${nextStatus}`, "success");
-        fetchData();
-      } else {
-        const err = await res.json();
-        showToast(err.detail || "Failed to update status", "error");
-      }
-    } catch (e) {
-      showToast("Connection error", "error");
-    }
+      if (res.ok) { showToast(`Issue updated → ${nextStatus}`, "success"); refresh(); }
+      else { const e = await res.json(); showToast(e.detail || "Failed to update", "error"); }
+    } catch { showToast("Connection error", "error"); }
   };
 
   const handleUserRoleToggle = async (userId, newRole) => {
@@ -207,721 +227,63 @@ export default function Dashboard() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ user_id: userId, role: newRole }),
-        credentials: "include"
+        credentials: "include",
       });
-      if (res.ok) {
-        showToast(`User role updated to ${newRole}`, "success");
-        fetchData();
-      } else {
-        const err = await res.json();
-        showToast(err.detail || "Failed to update user role", "error");
-      }
-    } catch (e) {
-      showToast("Connection error", "error");
-    }
+      if (res.ok) { showToast(`Role updated → ${newRole}`, "success"); refresh(); }
+      else { const e = await res.json(); showToast(e.detail || "Failed to update role", "error"); }
+    } catch { showToast("Connection error", "error"); }
   };
 
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setMounted(true);
-    // user is already populated from the lazy useState initializer above.
-    // This effect only handles redirect and initial data fetch.
-    if (!user) {
-      router.push("/login");
-      return;
-    }
-    fetchData(user);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Filter reports according to severity filter and class filter
-  const filteredReports = reports.filter((report) => {
-    // 1. Get max severity
-    const severities = report.detections?.map((d) => d.severity.toLowerCase()) || [];
-    let maxSeverity = "low";
-    if (severities.includes("high")) maxSeverity = "high";
-    else if (severities.includes("medium")) maxSeverity = "medium";
-
-    // Check severity toggle
-    if (!severityFilter[maxSeverity]) return false;
-
-    // 2. Check class filter
-    if (classFilter !== "all") {
-      const classes = report.detections?.map((d) => d.class.toLowerCase()) || [];
-      if (!classes.includes(classFilter)) return false;
-    }
-
-    // 3. Check status filter
-    if (statusFilter !== "all") {
-      if ((report.status || "detected").toLowerCase() !== statusFilter) return false;
-    }
-
-    return true;
-  });
-
-  const filteredIssues = mapIssues.filter((issue) => {
-    // 1. Get max severity
-    const severities = issue.detections?.map((d) => d.severity.toLowerCase()) || [];
-    let maxSeverity = "low";
-    if (severities.includes("high")) maxSeverity = "high";
-    else if (severities.includes("medium")) maxSeverity = "medium";
-
-    // Check severity toggle
-    if (!severityFilter[maxSeverity]) return false;
-
-    // 2. Check class filter
-    if (classFilter !== "all") {
-      const classes = issue.detections?.map((d) => d.class.toLowerCase()) || [];
-      if (!classes.includes(classFilter)) return false;
-    }
-
-    // 3. Check status filter
-    if (statusFilter !== "all") {
-      if ((issue.status || "detected").toLowerCase() !== statusFilter) return false;
-    }
-
-    return true;
-  });
-
-  // Handle real image upload & detection workflow
   const handleImageUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
     try {
       setUploading(true);
       setError(null);
-
-      // 1. Generate random coordinate around Mumbai
-      // Mumbai center: Lat 19.0760, Lon 72.8777
-      const randomJitterLat = (Math.random() - 0.5) * 0.08;
-      const randomJitterLon = (Math.random() - 0.5) * 0.08;
-      const mockLat = 19.0760 + randomJitterLat;
-      const mockLon = 72.8777 + randomJitterLon;
-      
-      const mockSpeed = Math.round(20 + Math.random() * 50);
-
-      // 2. Build FormData
+      const jitterLat = (Math.random() - 0.5) * 0.08;
+      const jitterLon = (Math.random() - 0.5) * 0.08;
       const formData = new FormData();
       formData.append("file", file);
-      formData.append("latitude", mockLat.toString());
-      formData.append("longitude", mockLon.toString());
+      formData.append("latitude", (19.076 + jitterLat).toString());
+      formData.append("longitude", (72.8777 + jitterLon).toString());
       formData.append("vehicle_id", "demo-web-upload");
-      formData.append("speed_kmph", mockSpeed.toString());
-
-      // 3. Call backend POST /detect-image
-      // 3. Call backend POST /detect-image
-      const response = await fetch(`${BACKEND_URL}/detect-image`, {
-        method: "POST",
-        body: formData,
-        credentials: "include",
+      formData.append("speed_kmph", String(Math.round(20 + Math.random() * 50)));
+      const res = await fetch(`${BACKEND_URL}/detect-image`, {
+        method: "POST", body: formData, credentials: "include",
       });
-
-      if (response.status === 401) {
-        localStorage.removeItem("user");
-        router.push("/login");
-        return;
-      }
-
-      if (!response.ok) {
-        const errJson = await response.json().catch(() => ({}));
-        const errDetail = errJson.detail || "Image analysis failed.";
-        throw new Error(errDetail);
-      }
-
-      const reportData = await response.json();
-
-      // 4. Refresh data
-      await fetchData();
-
-      // 5. Show toast based on detections
-      if (reportData.detections && reportData.detections.length > 0) {
-        showToast(`Image analyzed: Found ${reportData.detections.length} hazard(s)!`, "success");
-      } else {
-        showToast("Image analyzed: No hazards detected.", "success");
-      }
+      if (res.status === 401) { localStorage.removeItem("user"); router.push("/login"); return; }
+      if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.detail || "Image analysis failed."); }
+      const data = await res.json();
+      await refresh();
+      showToast(
+        data.detections?.length > 0
+          ? `Analyzed: Found ${data.detections.length} hazard(s)!`
+          : "Analyzed: No hazards detected.",
+        "success"
+      );
     } catch (err) {
-      console.error(err);
       showToast(err.message, "error");
       setError(err.message);
-    } finally {
-      setUploading(false);
-    }
+    } finally { setUploading(false); }
   };
 
+  // ── Derived data ─────────────────────────────────────────────────────────────
 
-  const renderFilters = () => (
-    <section className="bg-slate-900/40 border border-slate-800/60 p-4 rounded-2xl flex flex-col gap-3 shrink-0">
-      <div className="flex items-center gap-2 text-xs font-bold text-slate-400">
-        <Sliders className="h-4 w-4" />
-        <span>DASHBOARD FILTERS</span>
-      </div>
+  const filteredReports = applyFilters(reports, severityFilter, classFilter, statusFilter, realGpsOnly);
+  const filteredIssues  = applyFilters(mapIssues, severityFilter, classFilter, statusFilter, realGpsOnly);
 
-      {/* Severity Filter */}
-      <div className="flex flex-col gap-1.5 mt-1">
-        <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wide">Severity Toggles:</span>
-        <div className="flex gap-2">
-          {Object.keys(severityFilter).map((sev) => (
-            <button
-              key={sev}
-              onClick={() => setSeverityFilter(prev => ({ ...prev, [sev]: !prev[sev] }))}
-              className={`flex-1 py-1.5 px-3 text-xs font-semibold rounded-xl border transition cursor-pointer capitalize ${
-                severityFilter[sev]
-                  ? sev === "high"
-                    ? "bg-red-500/10 text-red-400 border-red-500/40"
-                    : sev === "medium"
-                    ? "bg-orange-500/10 text-orange-400 border-orange-500/40"
-                    : "bg-green-500/10 text-green-400 border-green-500/40"
-                  : "bg-slate-950/20 text-slate-500 border-slate-800 hover:border-slate-700"
-              }`}
-            >
-              {sev}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Class Filter */}
-      <div className="flex flex-col gap-1.5 mt-1">
-        <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wide">Hazard Type:</span>
-        <div className="flex gap-2">
-          {["all", "pothole", "crack"].map((cls) => (
-            <button
-              key={cls}
-              onClick={() => setClassFilter(cls)}
-              className={`flex-1 py-1.5 px-3 text-xs font-semibold rounded-xl border transition cursor-pointer capitalize ${
-                classFilter === cls
-                  ? "bg-blue-600/20 text-blue-400 border-blue-500/40"
-                  : "bg-slate-950/20 text-slate-500 border-slate-800 hover:border-slate-700"
-              }`}
-            >
-              {cls === "all" ? "All Hazards" : cls + "s"}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Status Filter */}
-      <div className="flex flex-col gap-1.5 mt-1">
-        <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wide">Status Filter:</span>
-        <select
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
-          className="bg-slate-950 border border-slate-800 rounded-xl text-xs p-2 text-slate-300 focus:outline-none focus:border-blue-500 w-full"
-        >
-          <option value="all">All Statuses</option>
-          <option value="detected">Detected</option>
-          <option value="verified">Verified</option>
-          <option value="assigned">Assigned</option>
-          <option value="inspection">Inspection</option>
-          <option value="repair">Repair</option>
-          <option value="completed">Completed</option>
-          <option value="closed">Closed</option>
-        </select>
-      </div>
-    </section>
-  );
-
-  const renderTelemetryUpload = () => (
-    <section className="bg-slate-900/40 border border-slate-800/60 p-4 rounded-2xl flex flex-col gap-3 shrink-0">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2 text-xs font-bold text-slate-400">
-          <Upload className="h-4 w-4" />
-          <span>DEMO TELEMETRY UPLOAD</span>
-        </div>
-        {uploading && (
-          <span className="text-[10px] text-blue-400 animate-pulse font-bold">Uploading...</span>
-        )}
-      </div>
-
-      <label className={`w-full h-24 rounded-2xl border border-dashed border-slate-800 bg-slate-950/30 flex flex-col items-center justify-center cursor-pointer transition duration-150 relative ${uploading ? "opacity-50 pointer-events-none" : "hover:border-blue-500/50 hover:bg-slate-900/30"}`}>
-        <input
-          type="file"
-          accept="image/*"
-          onChange={handleImageUpload}
-          className="hidden"
-          disabled={uploading}
-        />
-        <Upload className="h-5 w-5 text-slate-500 mb-1.5" />
-        <span className="text-xs text-slate-400 font-semibold text-center">Click to upload road image</span>
-        <span className="text-[9px] text-slate-600 text-center mt-0.5">Mock GPS tags Mumbai area on map</span>
-      </label>
-    </section>
-  );
-
-  const renderReportLogs = () => (
-    <section className="flex-1 bg-slate-900/40 border border-slate-800/60 p-4 rounded-2xl flex flex-col overflow-hidden min-h-[12rem]">
-      <div className="flex items-center justify-between mb-3 shrink-0">
-        <div className="flex items-center gap-2 text-xs font-bold text-slate-400">
-          <FileSpreadsheet className="h-4 w-4" />
-          <span>REPORT LOGS ({totalReports} total)</span>
-        </div>
-      </div>
-
-      <div className="flex-1 overflow-y-auto custom-scrollbar space-y-2 pr-1">
-        {filteredReports.length === 0 ? (
-          <div className="h-full flex flex-col items-center justify-center text-slate-600 text-xs py-8">
-            <CheckCircle className="h-8 w-8 mb-2 opacity-30 text-green-500" />
-            No reports matching current filters.
-          </div>
-        ) : (
-          filteredReports.map((report) => {
-            const severities = report.detections?.map((d) => d.severity.toLowerCase()) || [];
-            let maxSeverity = "low";
-            if (severities.includes("high")) maxSeverity = "high";
-            else if (severities.includes("medium")) maxSeverity = "medium";
-
-            return (
-              <div
-                key={report.id}
-                className="bg-slate-950/40 hover:bg-slate-900/30 border border-slate-800/80 hover:border-slate-700/60 rounded-xl p-3 flex items-center justify-between transition duration-150 gap-3"
-              >
-                <div className="flex flex-col gap-0.5 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-bold text-slate-100 truncate">
-                      Vehicle: {report.vehicle_id}
-                    </span>
-                    <span
-                      className={`text-[9px] font-extrabold uppercase px-1.5 py-0.5 rounded-full shrink-0 border ${
-                        maxSeverity === "high"
-                          ? "bg-red-500/10 text-red-400 border-red-500/20"
-                          : maxSeverity === "medium"
-                          ? "bg-orange-500/10 text-orange-400 border-orange-500/20"
-                          : "bg-green-500/10 text-green-400 border-green-500/20"
-                      }`}
-                    >
-                      {maxSeverity}
-                    </span>
-                    <span
-                      className={`text-[8px] font-extrabold uppercase px-1.5 py-0.5 rounded-full shrink-0 border ${
-                        (report.status || "detected").toLowerCase() === "verified"
-                          ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
-                          : (report.status || "detected").toLowerCase() === "assigned"
-                          ? "bg-indigo-500/10 text-indigo-400 border-indigo-500/20"
-                          : (report.status || "detected").toLowerCase() === "inspection"
-                          ? "bg-amber-500/10 text-amber-400 border-amber-500/20"
-                          : (report.status || "detected").toLowerCase() === "repair"
-                          ? "bg-orange-500/10 text-orange-400 border-orange-500/20"
-                          : (report.status || "detected").toLowerCase() === "completed"
-                          ? "bg-teal-500/10 text-teal-400 border-teal-500/20"
-                          : (report.status || "detected").toLowerCase() === "closed"
-                          ? "bg-rose-500/10 text-rose-400 border-rose-500/20"
-                          : "bg-slate-800 text-slate-400 border-slate-700"
-                      }`}
-                    >
-                      {report.status || "detected"}
-                    </span>
-                  </div>
-                  <div className="text-[10px] text-slate-500 flex items-center gap-1.5 mt-0.5">
-                    <Calendar className="h-3 w-3 shrink-0" />
-                    <span>
-                      {new Date(report.timestamp).toLocaleString([], {
-                        month: "short",
-                        day: "numeric",
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      })}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="flex flex-col items-end gap-1 shrink-0">
-                  <div className="text-[10px] text-slate-400 font-bold bg-slate-900 border border-slate-800 px-2 py-0.5 rounded">
-                    {report.detections?.length || 0} Detections
-                  </div>
-                  <span className="text-[9px] text-slate-600 italic truncate">
-                    Lat: {report.latitude.toFixed(4)}, Lon: {report.longitude.toFixed(4)}
-                    {report.speed_kmph !== undefined && report.speed_kmph !== null && ` | ${report.speed_kmph} km/h`}
-                  </span>
-                </div>
-              </div>
-            );
-          })
-        )}
-      </div>
-
-      {/* Pagination Footer */}
-      {totalReports > 10 && (
-        <div className="flex items-center justify-between border-t border-slate-800/80 pt-3 mt-3 shrink-0">
-          <button
-            onClick={() => fetchData(null, reportPage - 1)}
-            disabled={reportPage === 1}
-            className="px-2.5 py-1 text-[10px] font-bold bg-slate-800 hover:bg-slate-700 active:bg-slate-900 border border-slate-700/60 rounded disabled:opacity-40 cursor-pointer"
-          >
-            Prev
-          </button>
-          <span className="text-[10px] text-slate-400 font-semibold">
-            Page {reportPage} of {Math.ceil(totalReports / 10)}
-          </span>
-          <button
-            onClick={() => fetchData(null, reportPage + 1)}
-            disabled={reportPage >= Math.ceil(totalReports / 10)}
-            className="px-2.5 py-1 text-[10px] font-bold bg-slate-800 hover:bg-slate-700 active:bg-slate-900 border border-slate-700/60 rounded disabled:opacity-40 cursor-pointer"
-          >
-            Next
-          </button>
-        </div>
-      )}
-    </section>
-  );
-
-  const renderPendingRepairQueue = () => {
-    const pendingIssues = mapIssues.filter(issue =>
-      ["detected", "verified", "repair"].includes((issue.status || "detected").toLowerCase())
-    );
-
-    return (
-      <section className="bg-slate-900/40 border border-slate-800/60 p-4 rounded-2xl flex flex-col overflow-hidden min-h-[16rem] max-h-[22rem]">
-        <div className="flex items-center justify-between mb-3 shrink-0">
-          <div className="flex items-center gap-2 text-xs font-bold text-slate-400">
-            <Activity className="h-4 w-4 text-blue-400" />
-            <span>PENDING ACTION QUEUE ({pendingIssues.length})</span>
-          </div>
-        </div>
-
-        <div className="flex-1 overflow-y-auto custom-scrollbar space-y-2 pr-1">
-          {pendingIssues.length === 0 ? (
-            <div className="h-full flex flex-col items-center justify-center text-slate-600 text-xs py-8">
-              <CheckCircle className="h-8 w-8 mb-2 opacity-30 text-green-500" />
-              No issues pending action.
-            </div>
-          ) : (
-            pendingIssues.map((issue) => {
-              const maxSeverity = issue.max_severity?.toLowerCase() || "low";
-              const nextStatusMap = {
-                detected: "verified",
-                verified: "repair",
-                repair: "completed"
-              };
-              const actionLabelMap = {
-                detected: "Verify",
-                verified: "Dispatch",
-                repair: "Complete"
-              };
-              const currentStatus = (issue.status || "detected").toLowerCase();
-              const nextStatus = nextStatusMap[currentStatus];
-              const actionLabel = actionLabelMap[currentStatus];
-
-              return (
-                <div
-                  key={issue.id}
-                  className="bg-slate-950/40 border border-slate-800/80 rounded-xl p-3 flex flex-col gap-2 transition duration-150"
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-bold text-slate-100">
-                        Issue: #{issue.id.slice(0, 8)}
-                      </span>
-                      <span
-                        className={`text-[9px] font-extrabold uppercase px-1.5 py-0.5 rounded-full shrink-0 border ${
-                          maxSeverity === "high"
-                            ? "bg-red-500/10 text-red-400 border-red-500/20"
-                            : maxSeverity === "medium"
-                            ? "bg-orange-500/10 text-orange-400 border-orange-500/20"
-                            : "bg-green-500/10 text-green-400 border-green-500/20"
-                        }`}
-                      >
-                        {maxSeverity}
-                      </span>
-                    </div>
-                    <span className="text-[10px] text-slate-400 bg-slate-900 border border-slate-800 px-2 py-0.5 rounded">
-                      {issue.detection_count} reports
-                    </span>
-                  </div>
-
-                  <div className="flex items-center justify-between mt-1">
-                    <span className="text-[10px] text-slate-500 italic">
-                      Type: {issue.class_name || "Mixed"} | Lat: {issue.latitude.toFixed(4)}
-                    </span>
-                    {nextStatus && (
-                      <button
-                        onClick={() => handleQuickAction(issue.id, nextStatus)}
-                        className="px-2 py-1 text-[10px] font-extrabold bg-blue-600 hover:bg-blue-500 text-white rounded transition cursor-pointer"
-                      >
-                        {actionLabel}
-                      </button>
-                    )}
-                  </div>
-                </div>
-              );
-            })
-          )}
-        </div>
-      </section>
-    );
+  const filterProps = {
+    severityFilter, setSeverityFilter,
+    classFilter, setClassFilter,
+    statusFilter, setStatusFilter,
+    realGpsOnly, setRealGpsOnly,
   };
 
-  const renderAnalyticsCharts = () => {
-    const pieData = Object.entries(analytics.class_distribution || {}).map(([name, value]) => ({
-      name: name.toUpperCase(),
-      value
-    }));
-    const COLORS = ["#3b82f6", "#6366f1", "#f59e0b", "#ec4899"];
-
-    return (
-      <section className="bg-slate-900/40 border border-slate-800/60 p-4 rounded-2xl flex flex-col gap-4 shrink-0">
-        <div>
-          <span className="text-xs font-bold text-slate-400 uppercase tracking-wide">REPORT VOLUME TRENDS</span>
-          <div className="mt-3">
-            {analytics.time_series && analytics.time_series.length > 0 ? (
-              <ResponsiveContainer width="100%" height={150}>
-                <AreaChart data={analytics.time_series} margin={{ top: 5, right: 5, left: -25, bottom: 0 }}>
-                  <defs>
-                    <linearGradient id="colorHigh" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#ef4444" stopOpacity={0.2}/>
-                      <stop offset="95%" stopColor="#ef4444" stopOpacity={0}/>
-                    </linearGradient>
-                    <linearGradient id="colorTotal" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.2}/>
-                      <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
-                    </linearGradient>
-                  </defs>
-                  <XAxis dataKey="date" stroke="#64748b" fontSize={9} tickLine={false} />
-                  <YAxis stroke="#64748b" fontSize={9} tickLine={false} />
-                  <ChartTooltip contentStyle={{ backgroundColor: "#0f172a", borderColor: "#334155", borderRadius: "8px" }} labelStyle={{ color: "#94a3b8", fontSize: 9 }} itemStyle={{ fontSize: 9 }} />
-                  <Area type="monotone" dataKey="total" stroke="#3b82f6" fillOpacity={1} fill="url(#colorTotal)" name="Total Reports" strokeWidth={1.5} />
-                  <Area type="monotone" dataKey="high" stroke="#ef4444" fillOpacity={1} fill="url(#colorHigh)" name="High Severity" strokeWidth={1.5} />
-                </AreaChart>
-              </ResponsiveContainer>
-            ) : (
-              <p className="text-xs text-slate-600 text-center py-4">No time-series data available</p>
-            )}
-          </div>
-        </div>
-
-        <div className="border-t border-slate-800/80 pt-4">
-          <span className="text-xs font-bold text-slate-400 uppercase tracking-wide">HAZARD DISTRIBUTION</span>
-          <div className="flex items-center justify-between gap-2 mt-2">
-            <div className="flex-1">
-              {pieData.length > 0 ? (
-                <ResponsiveContainer width="100%" height={120}>
-                  <PieChart>
-                    <Pie
-                      data={pieData}
-                      cx="50%"
-                      cy="50%"
-                      innerRadius={25}
-                      outerRadius={45}
-                      paddingAngle={4}
-                      dataKey="value"
-                    >
-                      {pieData.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                      ))}
-                    </Pie>
-                    <ChartTooltip contentStyle={{ backgroundColor: "#0f172a", borderColor: "#334155", borderRadius: "8px" }} itemStyle={{ fontSize: 9 }} />
-                  </PieChart>
-                </ResponsiveContainer>
-              ) : (
-                <p className="text-xs text-slate-600 text-center py-4">No hazard breakdown available</p>
-              )}
-            </div>
-
-            <div className="flex flex-col gap-1.5 shrink-0">
-              {pieData.map((d, index) => (
-                <div key={d.name} className="flex items-center gap-2">
-                  <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: COLORS[index % COLORS.length] }}></div>
-                  <span className="text-[10px] font-semibold text-slate-400 capitalize">{d.name.toLowerCase()} ({d.value})</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      </section>
-    );
-  };
-
-  const renderActiveVehicles = () => {
-    const vehiclesMap = {};
-    reports.forEach(r => {
-      if (!vehiclesMap[r.vehicle_id]) {
-        vehiclesMap[r.vehicle_id] = {
-          id: r.vehicle_id,
-          last_seen: r.timestamp,
-          last_speed: r.speed_kmph || 0,
-          hazard_count: 0,
-          lat: r.latitude,
-          lon: r.longitude,
-        };
-      }
-      vehiclesMap[r.vehicle_id].hazard_count += r.detections?.length || 0;
-      if (new Date(r.timestamp) > new Date(vehiclesMap[r.vehicle_id].last_seen)) {
-        vehiclesMap[r.vehicle_id].last_seen = r.timestamp;
-        vehiclesMap[r.vehicle_id].last_speed = r.speed_kmph || 0;
-        vehiclesMap[r.vehicle_id].lat = r.latitude;
-        vehiclesMap[r.vehicle_id].lon = r.longitude;
-      }
-    });
-    const vehiclesList = Object.values(vehiclesMap);
-
-    return (
-      <section className="bg-slate-900/40 border border-slate-800/60 p-4 rounded-2xl flex flex-col overflow-hidden min-h-[14rem] max-h-[18rem]">
-        <div className="flex items-center gap-2 text-xs font-bold text-slate-400 mb-3 shrink-0">
-          <Car className="h-4 w-4 text-indigo-400" />
-          <span>ACTIVE TELEMETRY VEHICLES ({vehiclesList.length})</span>
-        </div>
-        <div className="flex-1 overflow-y-auto custom-scrollbar space-y-2 pr-1">
-          {vehiclesList.length === 0 ? (
-            <div className="h-full flex flex-col items-center justify-center text-slate-600 text-xs py-6">
-              No vehicles active.
-            </div>
-          ) : (
-            vehiclesList.map((veh) => (
-              <div
-                key={veh.id}
-                className="bg-slate-950/40 border border-slate-800/80 rounded-xl p-3 flex items-center justify-between"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse shrink-0"></div>
-                  <div className="flex flex-col">
-                    <span className="text-xs font-bold text-slate-200">{veh.id}</span>
-                    <span className="text-[9px] text-slate-500 mt-0.5">
-                      Last speed: {veh.last_speed.toFixed(0)} km/h
-                    </span>
-                  </div>
-                </div>
-                <div className="flex flex-col items-end gap-1">
-                  <span className="text-[10px] text-slate-400 font-semibold bg-slate-900 border border-slate-800 px-2 py-0.5 rounded">
-                    {veh.hazard_count} hazards logged
-                  </span>
-                  <span className="text-[8px] text-slate-600 italic">
-                    Ping: {veh.lat.toFixed(4)}, {veh.lon.toFixed(4)}
-                  </span>
-                </div>
-              </div>
-            ))
-          )}
-        </div>
-      </section>
-    );
-  };
-
-  const renderUserDirectory = () => (
-    <section className="bg-slate-900/40 border border-slate-800/60 p-4 rounded-2xl flex flex-col overflow-hidden min-h-[14rem] max-h-[18rem]">
-      <div className="flex items-center gap-2 text-xs font-bold text-slate-400 mb-3 shrink-0">
-        <Users className="h-4 w-4 text-blue-400" />
-        <span>USER REGISTRY ({adminUsers.length})</span>
-      </div>
-      <div className="flex-1 overflow-y-auto custom-scrollbar space-y-2 pr-1">
-        {adminUsers.length === 0 ? (
-          <p className="text-xs text-slate-600 text-center py-4">No users registered.</p>
-        ) : (
-          adminUsers.map((u) => (
-            <div
-              key={u.id}
-              className="bg-slate-950/40 border border-slate-800/80 rounded-xl p-3 flex items-center justify-between"
-            >
-              <div className="flex flex-col">
-                <span className="text-xs font-bold text-slate-200">{u.username}</span>
-                <span className="text-[9px] text-slate-500 mt-0.5">
-                  Created: {new Date(u.created_at).toLocaleDateString()}
-                </span>
-              </div>
-              <select
-                value={u.role}
-                onChange={(e) => handleUserRoleToggle(u.id, e.target.value)}
-                className="bg-slate-900 border border-slate-800 rounded-lg text-[10px] font-semibold px-2 py-1 text-slate-300 focus:outline-none cursor-pointer"
-              >
-                <option value="admin">Admin</option>
-                <option value="authority">Authority</option>
-                <option value="fleet">Fleet</option>
-              </select>
-            </div>
-          ))
-        )}
-      </div>
-    </section>
-  );
-
-  const renderSystemHealth = () => {
-    if (!systemHealth) return null;
-
-    return (
-      <section className="bg-slate-900/40 border border-slate-800/60 p-4 rounded-2xl flex flex-col gap-3.5 shrink-0">
-        <div className="flex items-center gap-2 text-xs font-bold text-slate-400 shrink-0">
-          <Server className="h-4 w-4 text-emerald-400" />
-          <span>SYSTEM INFRASTRUCTURE HEALTH</span>
-        </div>
-
-        <div className="grid grid-cols-2 gap-3">
-          <div className="bg-slate-950/40 border border-slate-800/80 rounded-xl p-3 flex flex-col gap-1.5">
-            <div className="flex items-center justify-between text-[9px] uppercase font-bold text-slate-500">
-              <span>CPU LOAD</span>
-              <Cpu className="h-3 w-3 text-blue-400" />
-            </div>
-            <span className="text-sm font-extrabold text-slate-200">{systemHealth.cpu_usage_pct}%</span>
-            <div className="w-full h-1.5 bg-slate-900 rounded-full overflow-hidden">
-              <div className="h-full bg-blue-500 rounded-full" style={{ width: `${systemHealth.cpu_usage_pct}%` }}></div>
-            </div>
-          </div>
-
-          <div className="bg-slate-950/40 border border-slate-800/80 rounded-xl p-3 flex flex-col gap-1.5">
-            <div className="flex items-center justify-between text-[9px] uppercase font-bold text-slate-500">
-              <span>MEMORY</span>
-              <Activity className="h-3 w-3 text-purple-400" />
-            </div>
-            <span className="text-sm font-extrabold text-slate-200">{systemHealth.memory_usage_pct}%</span>
-            <div className="w-full h-1.5 bg-slate-900 rounded-full overflow-hidden">
-              <div className="h-full bg-purple-500 rounded-full" style={{ width: `${systemHealth.memory_usage_pct}%` }}></div>
-            </div>
-          </div>
-
-          <div className="bg-slate-950/40 border border-slate-800/80 rounded-xl p-3 flex flex-col gap-1">
-            <span className="text-[9px] uppercase font-bold text-slate-500">DB CONNS</span>
-            <div className="flex items-baseline gap-1 mt-0.5">
-              <span className="text-sm font-extrabold text-slate-200">
-                {systemHealth.db_active_connections}
-              </span>
-              <span className="text-[10px] text-slate-500">/ {systemHealth.db_max_connections} active</span>
-            </div>
-          </div>
-
-          <div className="bg-slate-950/40 border border-slate-800/80 rounded-xl p-3 flex flex-col gap-1">
-            <span className="text-[9px] uppercase font-bold text-slate-500">DISK STORAGE</span>
-            <div className="flex items-baseline gap-1 mt-0.5 text-xs font-semibold">
-              <span className="text-sm font-extrabold text-slate-200">
-                {systemHealth.disk_used_mb.toFixed(1)} MB
-              </span>
-              <span className="text-[10px] text-slate-500">/ {(systemHealth.disk_total_mb / 1024).toFixed(0)} GB</span>
-            </div>
-          </div>
-        </div>
-      </section>
-    );
-  };
-
-  const renderModelRegistry = () => {
-    const activeModel = systemHealth ? "roadsense-stub-v2" : "offline";
-    const latency = systemHealth ? `${systemHealth.stub_inference_latency_ms}ms` : "N/A";
-
-    return (
-      <section className="bg-slate-900/40 border border-slate-800/60 p-4 rounded-2xl flex flex-col gap-2.5 shrink-0">
-        <div className="flex items-center gap-2 text-xs font-bold text-slate-400">
-          <Compass className="h-4 w-4 text-blue-400" />
-          <span>ACTIVE AI INFERENCE REGISTRY</span>
-        </div>
-        <div className="bg-slate-950/40 border border-slate-800/80 rounded-xl p-3 flex flex-col gap-2">
-          <div className="flex items-center justify-between text-xs">
-            <span className="font-semibold text-slate-400">Active Model:</span>
-            <span className="font-bold text-blue-400 uppercase tracking-wider">{activeModel}</span>
-          </div>
-          <div className="flex items-center justify-between text-xs">
-            <span className="font-semibold text-slate-400">Avg Inference Latency:</span>
-            <span className="font-bold text-slate-200">{latency}</span>
-          </div>
-          <div className="flex items-center justify-between text-xs">
-            <span className="font-semibold text-slate-400">Pipeline Status:</span>
-            <span className="font-bold text-green-400 uppercase tracking-wider">HEALTHY</span>
-          </div>
-        </div>
-      </section>
-    );
-  };
-
+  // ── Render ───────────────────────────────────────────────────────────────────
 
   return (
     <div className="flex flex-col h-screen w-screen bg-slate-950 text-slate-100 overflow-hidden font-sans">
-      {/* Navbar */}
+      {/* ── Navbar ── */}
       <header className="flex items-center justify-between px-6 py-4 bg-slate-900/60 backdrop-blur-md border-b border-slate-800 shrink-0">
         <div className="flex items-center gap-3">
           <div className="bg-gradient-to-tr from-blue-600 to-indigo-500 p-2.5 rounded-xl shadow-lg shadow-blue-500/20">
@@ -932,7 +294,7 @@ export default function Dashboard() {
               RoadSense AI
             </h1>
             <p className="text-[10px] font-semibold text-blue-400 uppercase tracking-widest">
-              Road Condition Dashboard (PoC)
+              Road Condition Dashboard
             </p>
           </div>
         </div>
@@ -944,14 +306,13 @@ export default function Dashboard() {
               <span>{error}</span>
             </div>
           )}
-
           {mounted && user && (
             <div className="flex items-center gap-3 bg-slate-900 border border-slate-800/80 px-3 py-1.5 rounded-xl">
               <div className="flex flex-col text-right">
                 <span className="text-[10px] font-bold text-slate-200">{user.username}</span>
                 <span className="text-[8px] uppercase tracking-wider font-semibold text-slate-500">{user.role}</span>
               </div>
-              <div className="h-4 w-px bg-slate-800/60"></div>
+              <div className="h-4 w-px bg-slate-800/60" />
               <button
                 onClick={handleLogout}
                 className="text-[10px] font-extrabold text-red-400 hover:text-red-300 transition duration-150 cursor-pointer"
@@ -960,11 +321,10 @@ export default function Dashboard() {
               </button>
             </div>
           )}
-
           <button
-            onClick={fetchData}
+            onClick={() => refresh()}
             disabled={loading}
-            className="flex items-center gap-2 px-3 py-2 text-xs font-semibold bg-slate-800 hover:bg-slate-700 active:bg-slate-900 border border-slate-700/60 rounded-xl transition duration-150 cursor-pointer disabled:opacity-50"
+            className="flex items-center gap-2 px-3 py-2 text-xs font-semibold bg-slate-800 hover:bg-slate-700 border border-slate-700/60 rounded-xl transition cursor-pointer disabled:opacity-50"
           >
             <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin text-blue-500" : ""}`} />
             Refresh
@@ -972,92 +332,60 @@ export default function Dashboard() {
         </div>
       </header>
 
-      {/* Main Body Layout */}
+      {/* ── Body ── */}
       <div className="flex flex-1 overflow-hidden p-6 gap-6">
-
-        {/* Left Side: Sidebar Controls, Stats, Upload, Lists */}
+        {/* Sidebar */}
         <div className="w-[32rem] flex flex-col gap-5 shrink-0 overflow-y-auto custom-scrollbar pr-1">
+          <StatCards analytics={analytics} />
 
-          {/* Stats Section */}
-          <section className="grid grid-cols-3 gap-3 shrink-0">
-            <div className="bg-slate-900/50 border border-slate-800/80 p-3 rounded-2xl flex flex-col justify-between">
-              <span className="text-[10px] uppercase font-bold tracking-wider text-slate-500">Reports</span>
-              <div className="flex items-baseline gap-1 mt-1">
-                <span className="text-2xl font-black text-white">{analytics.total_reports}</span>
-                <MapPin className="h-3.5 w-3.5 text-blue-400" />
-              </div>
-            </div>
-            <div className="bg-slate-900/50 border border-slate-800/80 p-3 rounded-2xl flex flex-col justify-between">
-              <span className="text-[10px] uppercase font-bold tracking-wider text-slate-500">Detections</span>
-              <div className="flex items-baseline gap-1 mt-1">
-                <span className="text-2xl font-black text-white">{analytics.total_detections}</span>
-                <Car className="h-3.5 w-3.5 text-indigo-400" />
-              </div>
-            </div>
-            <div className="bg-slate-900/50 border border-slate-800/80 p-3 rounded-2xl flex flex-col justify-between">
-              <span className="text-[10px] uppercase font-bold tracking-wider text-slate-500">High Risk</span>
-              <div className="flex items-baseline gap-1 mt-1">
-                <span className="text-2xl font-black text-red-500">{analytics.severity_distribution.high}</span>
-                <AlertTriangle className="h-3.5 w-3.5 text-red-500" />
-              </div>
-            </div>
-          </section>
-
-          {/* Conditional Role-based layouts */}
           {mounted && user?.role === "authority" && (
-            <>
-              {renderFilters()}
-              {renderPendingRepairQueue()}
-              {renderAnalyticsCharts()}
-            </>
+            <AuthorityDashboard
+              analytics={analytics}
+              mapIssues={mapIssues}
+              onQuickAction={handleQuickAction}
+              roadHealthSegments={roadHealthSegments}
+              showRoadHealth={showRoadHealth}
+              setShowRoadHealth={setShowRoadHealth}
+              {...filterProps}
+            />
           )}
 
           {mounted && user?.role === "fleet" && (
-            <>
-              {renderFilters()}
-              {renderTelemetryUpload()}
-              {renderActiveVehicles()}
-              {renderReportLogs()}
-            </>
+            <FleetDashboard
+              reports={reports}
+              filteredReports={filteredReports}
+              totalReports={totalReports}
+              reportPage={reportPage}
+              onPageChange={(p) => refresh(p)}
+              onUpload={handleImageUpload}
+              uploading={uploading}
+              {...filterProps}
+            />
           )}
 
           {mounted && user?.role === "admin" && (
-            <>
-              {renderUserDirectory()}
-              {renderSystemHealth()}
-              {renderModelRegistry()}
-              {renderTelemetryUpload()}
-            </>
+            <AdminDashboard
+              adminUsers={adminUsers}
+              systemHealth={systemHealth}
+              onRoleChange={handleUserRoleToggle}
+              onUpload={handleImageUpload}
+              uploading={uploading}
+            />
           )}
-
         </div>
 
-        {/* Right Side: Map Container */}
+        {/* Map */}
         <div className="flex-1 h-full min-w-0 relative">
-          <MapComponent reports={filteredIssues} onRefresh={fetchData} />
+          <MapComponent
+            reports={filteredIssues}
+            onRefresh={() => refresh()}
+            roadHealthSegments={roadHealthSegments}
+            showRoadHealth={showRoadHealth}
+          />
         </div>
-
       </div>
 
-      {/* Toast Notification */}
-      {toast && (
-        <div className={`fixed bottom-6 right-6 z-50 flex items-center gap-3 px-4 py-3 rounded-xl shadow-lg border border-slate-800/80 backdrop-blur-md transition-all duration-300 ${
-          toast.type === "success"
-            ? "bg-green-950/90 border-green-500/30 text-green-300"
-            : toast.type === "error"
-            ? "bg-red-950/90 border-red-500/30 text-red-300"
-            : "bg-slate-900/90 border-slate-800 text-slate-300"
-        }`}>
-          {toast.type === "success" ? (
-            <CheckCircle className="h-5 w-5 text-green-400 shrink-0" />
-          ) : toast.type === "error" ? (
-            <AlertTriangle className="h-5 w-5 text-red-400 shrink-0" />
-          ) : (
-            <Activity className="h-5 w-5 text-blue-400 shrink-0" />
-          )}
-          <span className="text-xs font-semibold">{toast.message}</span>
-        </div>
-      )}
+      <Toast toast={toast} />
     </div>
   );
 }

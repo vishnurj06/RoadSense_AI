@@ -4,6 +4,8 @@ import uuid
 from datetime import datetime
 from typing import List, Optional
 import httpx
+import math
+import psutil
 from fastapi import (
     FastAPI,
     Depends,
@@ -13,6 +15,7 @@ from fastapi import (
     status,
     Form,
     Response,
+    BackgroundTasks,
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -25,6 +28,9 @@ import schemas
 from database import get_db, SessionLocal, engine
 import auth
 import s3_storage
+from routers import fleet, notifications, admin, analytics
+import notification_service
+from enrichment import enrich_report
 
 INFERENCE_URL = os.getenv("INFERENCE_URL", "http://localhost:8001")
 
@@ -128,9 +134,15 @@ s3_storage.init_s3_bucket()
 
 
 # Helper function for spatial clustering
-def cluster_report_to_issue(db: Session, report: models.Report):
+def cluster_report_to_issue(db: Session, report: models.Report) -> "models.Issue | None":
+    """Cluster *report* into an existing Issue or create a new one.
+
+    Returns the newly-created Issue if one was created, or None if the report
+    was merged into an existing Issue.  Callers use the return value to decide
+    whether to fire high-severity notifications.
+    """
     if not report.detections:
-        return
+        return None
 
     primary_class = report.detections[0].class_name
     point_wkt = f"POINT({report.longitude} {report.latitude})"
@@ -198,6 +210,8 @@ def cluster_report_to_issue(db: Session, report: models.Report):
                 matching_issue.image_url = report.image_url
         elif not matching_issue.image_url and report.image_url:
             matching_issue.image_url = report.image_url
+
+        return None  # merged into existing issue; no notification needed
     else:
         # Create a new issue
         report_severities = [d.severity for d in report.detections]
@@ -231,6 +245,7 @@ def cluster_report_to_issue(db: Session, report: models.Report):
         db.add(new_issue)
         db.flush()
         report.issue_id = new_issue.id
+        return new_issue  # caller should trigger notifications if high severity
 
 
 # Note: We commented out models.Base.metadata.create_all(bind=engine)
@@ -259,6 +274,26 @@ app.mount(
     name="static",
 )
 
+# ── Routers ─────────────────────────────────────────────────────────────────────────────────
+app.include_router(fleet.router)
+app.include_router(notifications.router)
+app.include_router(admin.router)
+app.include_router(analytics.router)
+
+
+def get_active_model_version(db: Session) -> str | None:
+    """Return the version string of the currently active registered model.
+
+    Used as a fallback in /detect-image when the inference response doesn't
+    carry a model_version field (e.g. the stub, or an older infer_service).
+    Returns None if the registry is empty (no models registered yet).
+    """
+    active = (
+        db.query(models.AIModel)
+        .filter(models.AIModel.is_active.is_(True))
+        .first()
+    )
+    return active.version if active else None
 
 @app.post(
     "/auth/register",
@@ -373,6 +408,33 @@ def health_check(db: Session = Depends(get_db)):
     return status_checks
 
 
+def haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    R = 6371.0  # Earth radius in kilometers
+    dLat = math.radians(lat2 - lat1)
+    dLon = math.radians(lon2 - lon1)
+    a = math.sin(dLat / 2) ** 2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dLon / 2) ** 2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return R * c
+
+def validate_gps_and_teleportation(db: Session, vehicle_id: str, lat: float, lon: float, timestamp: datetime):
+    # Bounds Check
+    if not (-90.0 <= lat <= 90.0) or not (-180.0 <= lon <= 180.0):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Out-of-bounds GPS coordinates.")
+    # Null Island Check
+    if lat == 0.0 and lon == 0.0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Null Island (0,0) is not allowed.")
+
+    # Teleportation Check
+    last_report = db.query(models.Report).filter(models.Report.vehicle_id == vehicle_id).order_by(models.Report.timestamp.desc()).first()
+    if last_report:
+        time_diff_hours = abs((timestamp - last_report.timestamp).total_seconds()) / 3600.0
+        if time_diff_hours > 0:
+            distance_km = haversine(last_report.latitude, last_report.longitude, lat, lon)
+            speed_kmh = distance_km / time_diff_hours
+            if speed_kmh > 300.0:
+                raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"Teleportation detected: Implied speed {speed_kmh:.1f} km/h exceeds 300 km/h limit.")
+
+
 @app.post(
     "/detect",
     response_model=schemas.ReportResponse,
@@ -380,9 +442,13 @@ def health_check(db: Session = Depends(get_db)):
 )
 def create_report(
     payload: schemas.ReportCreate,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth.RoleChecker(["fleet", "admin"])),
 ):
+    # 0. Validate GPS and Teleportation
+    validate_gps_and_teleportation(db, payload.vehicle_id, payload.gps.lat, payload.gps.lon, payload.timestamp)
+
     # 1. Determine Report ID
     report_id = payload.report_id or str(uuid.uuid4())
 
@@ -406,6 +472,7 @@ def create_report(
         image_url=payload.image_url,
         speed_kmph=payload.speed_kmph,
         model_version=payload.model_version,
+        gps_source=payload.gps_source,
     )
     db.add(db_report)
 
@@ -423,7 +490,7 @@ def create_report(
 
     try:
         db.flush()
-        cluster_report_to_issue(db, db_report)
+        new_issue = cluster_report_to_issue(db, db_report)
         db.commit()
         db.refresh(db_report)
     except Exception as e:
@@ -433,7 +500,24 @@ def create_report(
             detail=f"Database insertion failed: {e}",
         )
 
+    # B3-2: fire notification for new high-severity issues (non-blocking)
+    if new_issue and new_issue.severity == "high":
+        notification_service.trigger_high_severity_notification(
+            new_issue, db, redis_client
+        )
+        db.commit()  # persist in-app notification rows
+
     clear_all_caches()
+
+    # B3-1: Update vehicle last_seen so camera health reflects telemetry cadence
+    vehicle_rec = (
+        db.query(models.Vehicle)
+        .filter(models.Vehicle.plate == db_report.vehicle_id)
+        .first()
+    )
+    if vehicle_rec:
+        vehicle_rec.last_seen = db_report.timestamp
+        db.commit()
 
     return db_report
 
@@ -451,6 +535,8 @@ async def detect_image(
     speed_kmph: Optional[float] = Form(
         None, description="Optional vehicle speed in km/h"
     ),
+    gps_source: str = Form("faked", description="Source of GPS"),
+    background_tasks: BackgroundTasks = None,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth.RoleChecker(["fleet", "admin"])),
 ):
@@ -470,6 +556,11 @@ async def detect_image(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail="image_too_large: Image exceeds 10 MB limit.",
         )
+
+    # 1.5 Validate GPS and Teleportation
+    # detect_image doesn't receive a timestamp in Form, so we use utcnow
+    current_time = datetime.utcnow()
+    validate_gps_and_teleportation(db, vehicle_id, latitude, longitude, current_time)
 
     # 2. Call INFERENCE_URL/infer using httpx
     async with httpx.AsyncClient() as client:
@@ -517,6 +608,14 @@ async def detect_image(
 
     # 5. Insert Report
     report_id = str(uuid.uuid4())
+    # B3-4: resolve model_version — prefer what the inference service reports,
+    # fall back to the active registry entry so the field is never NULL when a
+    # model is registered.
+    resolved_model_version = (
+        inference_data.get("model_version")
+        or get_active_model_version(db)
+    )
+
     db_report = models.Report(
         id=report_id,
         vehicle_id=vehicle_id,
@@ -525,9 +624,11 @@ async def detect_image(
         longitude=longitude,
         geom=f"POINT({longitude} {latitude})",
         speed_kmph=speed_kmph,
-        model_version=inference_data.get("model_version"),
+        model_version=resolved_model_version,
         image_url=s3_image_url,
+        gps_source=gps_source,
     )
+
     db.add(db_report)
 
     # 6. Insert associated Detections
@@ -544,7 +645,7 @@ async def detect_image(
 
     try:
         db.flush()
-        cluster_report_to_issue(db, db_report)
+        new_issue = cluster_report_to_issue(db, db_report)
         db.commit()
         db.refresh(db_report)
     except Exception as e:
@@ -554,7 +655,27 @@ async def detect_image(
             detail=f"Database insertion failed: {e}",
         )
 
+    # B3-2: fire notification for new high-severity issues (non-blocking)
+    if new_issue and new_issue.severity == "high":
+        notification_service.trigger_high_severity_notification(
+            new_issue, db, redis_client
+        )
+        db.commit()  # persist in-app notification rows
+
     clear_all_caches()
+
+    # B3-1: Update vehicle last_seen so camera health reflects telemetry cadence
+    vehicle_rec = (
+        db.query(models.Vehicle)
+        .filter(models.Vehicle.plate == vehicle_id)
+        .first()
+    )
+    if vehicle_rec:
+        vehicle_rec.last_seen = db_report.timestamp
+        db.commit()
+
+    if background_tasks:
+        background_tasks.add_task(enrich_report, db_report.id, db_report.latitude, db_report.longitude, db_report.timestamp)
 
     return db_report
 
@@ -608,6 +729,20 @@ def get_map_geojson(
             .first()
         )
 
+        # B3-6: an Issue clusters many Reports. Provenance must fail closed —
+        # if any contributing report carries faked GPS, the pin is unverified,
+        # regardless of what the latest report happens to say.
+        cluster_sources = {
+            s
+            for (s,) in db.query(models.Report.gps_source)
+            .filter(models.Report.issue_id == issue.id)
+            .distinct()
+        }
+        if "faked" in cluster_sources or None in cluster_sources:
+            issue_gps_source = "faked" if "faked" in cluster_sources else None
+        else:
+            issue_gps_source = latest_report.gps_source if latest_report else None
+
         detections_list = []
         if latest_report:
             for d in latest_report.detections:
@@ -642,6 +777,11 @@ def get_map_geojson(
                 "vehicle_id": f"Clustered ({issue.detection_count} reports)",
                 "speed_kmph": latest_report.speed_kmph if latest_report else None,
                 "model_version": latest_report.model_version if latest_report else None,
+                "gps_source": issue_gps_source,
+                # B3-5: enrichment is written onto the Report by the background
+                # task, so the map has to read it off the latest report — the
+                # Issue row carries no road_name of its own.
+                "road_name": latest_report.road_name if latest_report else None,
                 "detections": detections_list,
             },
         }
@@ -662,9 +802,12 @@ def verify_reports(
         db.query(models.Report).filter(models.Report.issue_id.is_(None)).all()
     )
     count = 0
+    new_high_issues = []
     for r in unclustered_reports:
-        cluster_report_to_issue(db, r)
+        new_issue = cluster_report_to_issue(db, r)
         count += 1
+        if new_issue and new_issue.severity == "high":
+            new_high_issues.append(new_issue)
     try:
         db.commit()
     except Exception as e:
@@ -673,6 +816,13 @@ def verify_reports(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Verification clustering failed: {e}",
         )
+    # B3-2: notify after commit — rate-limiter in service handles bursts
+    for issue in new_high_issues:
+        notification_service.trigger_high_severity_notification(
+            issue, db, redis_client
+        )
+    if new_high_issues:
+        db.commit()  # persist in-app notification rows
     clear_all_caches()
     return {"message": f"Clustered {count} reports successfully."}
 
@@ -708,78 +858,6 @@ async def upload_image(
     return {"image_url": s3_image_url}
 
 
-@app.get("/analytics")
-def get_analytics(
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(auth.get_current_user),
-):
-    from datetime import timedelta
-
-    # --- Redis Cache Read ---
-    cache_key = "cache_analytics"
-    cached = get_cache(cache_key)
-    if cached is not None:
-        return cached
-
-    reports_count = db.query(models.Report).count()
-    detections = db.query(models.Detection).all()
-
-    # Calculate severity and class counts
-    severity_counts = {"high": 0, "medium": 0, "low": 0}
-    class_counts = {}
-
-    for d in detections:
-        sev = d.severity.lower()
-        if sev in severity_counts:
-            severity_counts[sev] += 1
-
-        cls = d.class_name.lower()
-        class_counts[cls] = class_counts.get(cls, 0) + 1
-
-    # Time series of past 7 days (by report date)
-    today = datetime.utcnow().date()
-    time_series = []
-    for i in range(6, -1, -1):
-        target_date = today - timedelta(days=i)
-        day_start = datetime.combine(target_date, datetime.min.time())
-        day_end = datetime.combine(target_date, datetime.max.time())
-
-        reports_on_day = (
-            db.query(models.Report)
-            .filter(
-                models.Report.timestamp >= day_start,
-                models.Report.timestamp <= day_end,
-            )
-            .all()
-        )
-
-        day_counts = {
-            "date": target_date.strftime("%b %d"),
-            "high": 0,
-            "medium": 0,
-            "low": 0,
-            "total": 0,
-        }
-        for r in reports_on_day:
-            for d in r.detections:
-                sev = d.severity.lower()
-                if sev in ("high", "medium", "low"):
-                    day_counts[sev] += 1
-                    day_counts["total"] += 1
-        time_series.append(day_counts)
-
-    result = {
-        "total_reports": reports_count,
-        "total_detections": len(detections),
-        "severity_distribution": severity_counts,
-        "class_distribution": class_counts,
-        "time_series": time_series,
-    }
-    # --- Redis Cache Write (TTL: 5 minutes) ---
-    set_cache(cache_key, result, expire=300)
-    return result
-
-
 @app.get("/admin/users", response_model=List[schemas.UserResponse])
 def list_admin_users(
     db: Session = Depends(get_db),
@@ -793,16 +871,45 @@ def get_system_health(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth.RoleChecker(["admin"])),
 ):
-    # Simulated system stats for local dashboard demo
+    # ── Real system metrics via psutil ─────────────────────────────────────
+    cpu_pct = psutil.cpu_percent(interval=0.2)  # 200 ms sample — fast enough for a dashboard
+    mem = psutil.virtual_memory()
+    disk = psutil.disk_usage("/")
+
+    # ── DB connection pool stats ────────────────────────────────────────────
+    try:
+        pool = engine.pool
+        db_checked_out = pool.checkedout()   # connections currently in use
+        db_pool_size = pool.size()           # configured pool ceiling
+    except Exception:
+        db_checked_out = -1
+        db_pool_size = -1
+
+    # ── Live probe of the inference service ────────────────────────────────
+    inference_status = "unreachable"
+    inference_latency_ms: Optional[float] = None
+    try:
+        t0 = datetime.utcnow()
+        resp = httpx.get(f"{INFERENCE_URL}/health", timeout=2.0)
+        latency = (datetime.utcnow() - t0).total_seconds() * 1000
+        inference_status = "ok" if resp.status_code == 200 else f"http_{resp.status_code}"
+        inference_latency_ms = round(latency, 1)
+    except httpx.RequestError:
+        pass  # leave defaults — unreachable / None
+
     return {
-        "cpu_usage_pct": 34.5,
-        "memory_usage_pct": 58.2,
-        "db_active_connections": 4,
-        "db_max_connections": 20,
-        "stub_inference_latency_ms": 15,
-        "stub_inference_status": "ok",
-        "disk_used_mb": 4.2,
-        "disk_total_mb": 10240,
+        "cpu_usage_pct": round(cpu_pct, 1),
+        "memory_usage_pct": round(mem.percent, 1),
+        "memory_used_mb": round(mem.used / 1024 / 1024, 1),
+        "memory_total_mb": round(mem.total / 1024 / 1024, 1),
+        "disk_used_gb": round(disk.used / 1024 / 1024 / 1024, 2),
+        "disk_total_gb": round(disk.total / 1024 / 1024 / 1024, 2),
+        "disk_usage_pct": round(disk.percent, 1),
+        "db_active_connections": db_checked_out,
+        "db_pool_size": db_pool_size,
+        "inference_url": INFERENCE_URL,
+        "inference_status": inference_status,
+        "inference_latency_ms": inference_latency_ms,
     }
 
 

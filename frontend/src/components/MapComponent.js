@@ -2,9 +2,11 @@
 
 import React, { useState } from "react";
 import { useRouter } from "next/navigation";
-import { MapContainer, TileLayer, Marker, Popup } from "react-leaflet";
+import { MapContainer, TileLayer, Marker, Popup, Polygon } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
+import { getClassLabel, getClassBadgeStyle } from "@/lib/classUtils";
+import { getGpsProvenance, getGpsSourceLabel } from "@/lib/gpsUtils";
 
 // Set default fallback icon in case SVGs fail
 const DefaultIcon = L.icon({
@@ -18,7 +20,7 @@ const DefaultIcon = L.icon({
 L.Marker.prototype.options.icon = DefaultIcon;
 
 // Helper to generate dynamic colored pin SVGs
-const createMarkerIcon = (severity, detectionCount = 1) => {
+const createMarkerIcon = (severity, detectionCount = 1, gpsSource = null) => {
   let color = "#22c55e"; // Green for low
   if (severity === "high") {
     color = "#ef4444"; // Red
@@ -26,17 +28,37 @@ const createMarkerIcon = (severity, detectionCount = 1) => {
     color = "#f97316"; // Orange
   }
 
+  const isFaked = gpsSource === "faked";
+
+  // Faked-GPS markers:
+  //   • Reduced opacity (55%) so they read as uncertain at a glance
+  //   • Thick amber outer ring that is clearly visible at any zoom level
+  //   • Bold ⚠ glyph centred inside the pin body
+  // Real-GPS markers render at full opacity with no ring.
+  const opacity = isFaked ? 0.55 : 1.0;
+
+  const fakedRing = isFaked
+    ? `<circle cx="12" cy="9" r="8.5" fill="none" stroke="#f59e0b" stroke-width="2.5" stroke-dasharray="3,2"/>`
+    : "";
+
+  const fakedGlyph = isFaked
+    ? `<text x="12" y="12" font-size="7" font-family="sans-serif" font-weight="900" fill="#f59e0b" text-anchor="middle" dominant-baseline="middle">&#x26A0;</text>`
+    : "";
+
+  // Detection-count badge (blue pill in top-right corner)
   const badgeSvg =
     detectionCount > 1
       ? `
-    <circle cx="18" cy="6" r="5.5" fill="#3b82f6" stroke="#0f172a" stroke-width="1"/>
-    <text x="18" y="8" font-size="6.5" font-family="sans-serif" font-weight="bold" fill="white" text-anchor="middle">${detectionCount}</text>
+    <circle cx="20" cy="5" r="5.5" fill="#3b82f6" stroke="#0f172a" stroke-width="1"/>
+    <text x="20" y="7" font-size="6.5" font-family="sans-serif" font-weight="bold" fill="white" text-anchor="middle">${detectionCount}</text>
   `
       : "";
 
   const svgTemplate = `
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="38" height="38">
-      <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z" fill="${color}"/>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 26 42" width="26" height="42" style="overflow:visible;opacity:${opacity}">
+      ${fakedRing}
+      <path d="M13 1C9.13 1 6 4.13 6 8c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z" fill="${color}"/>
+      ${fakedGlyph}
       ${badgeSvg}
     </svg>
   `;
@@ -44,9 +66,9 @@ const createMarkerIcon = (severity, detectionCount = 1) => {
   return L.divIcon({
     html: svgTemplate,
     className: "custom-marker-icon",
-    iconSize: [38, 38],
-    iconAnchor: [19, 38],
-    popupAnchor: [0, -38],
+    iconSize: [26, 42],
+    iconAnchor: [13, 42],
+    popupAnchor: [0, -42],
   });
 };
 
@@ -211,15 +233,63 @@ function IssuePopupContent({ report, onRefresh }) {
         </div>
       )}
 
+      {report.road_name && (
+        <div className="text-xs text-slate-300 font-medium mb-1 truncate">
+          Location: <span className="text-slate-100 font-semibold">{report.road_name}</span>
+        </div>
+      )}
+
+      {/* B3-6: GPS provenance banner. Only an explicitly-known real source may
+          render as verified — faked and unknown both fail closed, so a missing
+          field can never masquerade as a verified location. */}
+      {getGpsProvenance(report.gps_source) === "faked" ? (
+        <div className="flex items-center gap-1.5 bg-amber-500/15 border border-amber-500/40 rounded-lg px-2 py-1 mb-1.5">
+          <span className="text-amber-400 text-xs" aria-hidden="true">⚠</span>
+          <span className="text-[10px] font-semibold text-amber-400 uppercase tracking-wide">
+            Unverified GPS — location is approximate
+          </span>
+        </div>
+      ) : getGpsProvenance(report.gps_source) === "real" ? (
+        <div className="flex items-center gap-1.5 mb-1.5">
+          <span className="text-[10px] text-emerald-400 font-semibold uppercase tracking-wide">
+            ✓ {report.gps_source.toUpperCase()} verified
+          </span>
+        </div>
+      ) : (
+        <div className="flex items-center gap-1.5 mb-1.5">
+          <span className="text-[10px] text-slate-400 font-semibold uppercase tracking-wide">
+            GPS provenance unknown
+          </span>
+        </div>
+      )}
+
+      <div className="text-xs text-slate-300 font-medium mb-1 truncate flex items-center gap-2">
+        GPS Source:
+        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider ${
+          {
+            faked: 'bg-red-500/20 text-red-400 border border-red-500/30',
+            real: 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30',
+            unknown: 'bg-slate-500/20 text-slate-400 border border-slate-500/30',
+          }[getGpsProvenance(report.gps_source)]
+        }`}>
+          {getGpsSourceLabel(report.gps_source)}
+        </span>
+      </div>
+
       <div className="border-t border-slate-800 my-1.5 pt-1.5">
         <div className="text-[11px] font-bold text-slate-400 mb-1">Detections:</div>
         <div className="space-y-1 max-h-24 overflow-y-auto pr-1">
-          {report.detections?.map((d) => (
+          {report.detections?.map((d, i) => (
             <div
-              key={d.id}
+              key={d.id ?? i}
               className="flex justify-between items-center text-xs bg-slate-900/50 p-1.5 rounded border border-slate-800"
             >
-              <span className="capitalize text-slate-200 font-medium">{d.class}</span>
+              {/* Contract v3: unknown classes get a labelled grey badge — never crash */}
+              <span
+                className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${getClassBadgeStyle(d.class)}`}
+              >
+                {getClassLabel(d.class)}
+              </span>
               <span className="text-slate-400 font-semibold">
                 {(d.confidence * 100).toFixed(0)}% conf
               </span>
@@ -284,7 +354,14 @@ function IssuePopupContent({ report, onRefresh }) {
   );
 }
 
-export default function MapComponent({ reports, onRefresh }) {
+const getHealthColor = (score) => {
+  if (score >= 80) return "#22c55e"; // Green
+  if (score >= 50) return "#eab308"; // Yellow
+  if (score >= 30) return "#f97316"; // Orange
+  return "#ef4444"; // Red
+};
+
+export default function MapComponent({ reports, onRefresh, roadHealthSegments = [], showRoadHealth = false }) {
   // Mumbai default center
   const defaultCenter = [19.076, 72.8777];
 
@@ -311,7 +388,7 @@ export default function MapComponent({ reports, onRefresh }) {
             <Marker
               key={report.id}
               position={[report.latitude, report.longitude]}
-              icon={createMarkerIcon(maxSeverity, report.detection_count)}
+              icon={createMarkerIcon(maxSeverity, report.detections?.length || 1, report.gps_source)}
             >
               <Popup className="roadsense-popup">
                 <IssuePopupContent report={report} onRefresh={onRefresh} />
@@ -319,6 +396,26 @@ export default function MapComponent({ reports, onRefresh }) {
             </Marker>
           );
         })}
+        {showRoadHealth && roadHealthSegments.map(segment => (
+          <Polygon 
+            key={segment.hex_id}
+            positions={segment.polygon}
+            pathOptions={{
+              fillColor: getHealthColor(segment.health_score),
+              fillOpacity: 0.5,
+              weight: 1,
+              color: getHealthColor(segment.health_score)
+            }}
+          >
+            <Popup>
+              <div className="text-xs p-1 min-w-[120px]">
+                <div className="font-bold mb-1 text-slate-800">Health Score: {segment.health_score}</div>
+                <div className="text-slate-600">Total Issues: {segment.total_issues}</div>
+                <div className="text-slate-600">Total Reports: {segment.total_reports}</div>
+              </div>
+            </Popup>
+          </Polygon>
+        ))}
       </MapContainer>
     </div>
   );

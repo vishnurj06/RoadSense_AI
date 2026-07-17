@@ -40,6 +40,12 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r backend/requirements.txt
 
+    - name: Syntax-gate — catch parse errors in ai/ and backend/
+      # Process fix for D-0: a SyntaxError in ai/detect.py reached main with
+      # green CI because only backend/ was being linted. compileall is fast
+      # (<1 s) and catches errors in BOTH tracks before any other step runs.
+      run: python -m compileall -q ai backend
+
     - name: Run Ruff Lint check
       run: ruff check backend/
 
@@ -75,9 +81,15 @@ jobs:
       run: npm run lint
       working-directory: frontend
 
+    - name: Run Jest unit + component tests
+      # --ci: no interactive watch; --passWithNoTests: ok while suite is still growing
+      run: npm run test:ci
+      working-directory: frontend
+
     - name: Build Next.js app
       run: npm run build
       working-directory: frontend
       env:
         # Silence Next.js telemetry during CI
         NEXT_TELEMETRY_DISABLED: 1
+

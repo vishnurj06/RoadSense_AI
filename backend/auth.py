@@ -1,4 +1,5 @@
 import os
+import sys
 from datetime import datetime, timedelta
 from typing import List, Optional
 from fastapi import Depends, HTTPException, Request, status
@@ -10,7 +11,18 @@ from database import get_db
 
 import bcrypt
 
-SECRET_KEY = os.getenv("SECRET_KEY", "roadsense-super-secret-key-2026")
+SECRET_KEY = os.environ.get("SECRET_KEY")
+if not SECRET_KEY:
+    # Allow tests to run without a real SECRET_KEY.
+    # We check sys.modules["pytest"] rather than PYTEST_CURRENT_TEST because
+    # PYTEST_CURRENT_TEST is set per-test (too late for conftest.py imports).
+    if "pytest" in sys.modules:
+        SECRET_KEY = "roadsense-test-only-key-not-for-production"
+    else:
+        raise ValueError(
+            "SECRET_KEY environment variable is not set. "
+            "Set it before starting the server: export SECRET_KEY=<random-256-bit-hex>"
+        )
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60
 

@@ -145,9 +145,21 @@ def test_admin_and_analytics_endpoints():
         assert res.status_code == 200
         assert len(res.json()) >= 3
 
-        res = client.get("/admin/system-health")
-        assert res.status_code == 200
-        assert res.json()["cpu_usage_pct"] == 34.5
+        from unittest.mock import patch
+        with patch("main.psutil.cpu_percent", return_value=34.5), \
+             patch("main.psutil.virtual_memory") as mock_mem, \
+             patch("main.psutil.disk_usage") as mock_disk:
+            
+            mock_mem.return_value.percent = 58.2
+            mock_mem.return_value.used = 8 * 1024 * 1024
+            mock_mem.return_value.total = 16 * 1024 * 1024
+            mock_disk.return_value.used = 10 * 1024 * 1024 * 1024
+            mock_disk.return_value.total = 100 * 1024 * 1024 * 1024
+            mock_disk.return_value.percent = 10.0
+
+            res = client.get("/admin/system-health")
+            assert res.status_code == 200
+            assert res.json()["cpu_usage_pct"] == 34.5
 
     # 3. Test /admin/users and /admin/system-health as fleet (should fail with 403)
     with TestClient(app) as client:

@@ -1,8 +1,8 @@
-# RoadSense AI — Continuous Memory and Context Log (Phase 2 - MVP)
+# RoadSense AI — Continuous Memory and Context Log (Phase 3 - Beta)
 
 This file is the canonical progress tracker for the entire RoadSense AI project (Backend, Frontend,
 and AI Pipeline). Updated after every completed and verified task.
-Last audited: **2026-07-16** (full codebase read-through by Senior Technical Architect).
+Last updated: **2026-07-17** — S5 dry-run in progress · S5-11 CI fully green (ruff + ESLint) · B3-5 `road_name` surfaced · B3-6 provenance fix completed (a *second* omission was found in the frontend adapter).
 
 ## Project Metadata
 
@@ -10,7 +10,7 @@ Last audited: **2026-07-16** (full codebase read-through by Senior Technical Arc
 |---|---|
 | **Project Name** | RoadSense AI (Platform) |
 | **Role** | Person B (Backend & Frontend Platform Owner) |
-| **Sprint** | Phase 2 (Local Development / MVP) — Platform ✅ Done · AI ⚠️ Partial |
+| **Sprint** | Phase 3 (Beta) — Platform track active · AI track active |
 | **Tech Stack** | FastAPI · Next.js · Tailwind CSS · Leaflet (OpenStreetMap) · PostgreSQL + PostGIS (Docker) · Redis · MinIO (S3-compatible) · YOLOv8s (ultralytics) |
 | **Repo** | `github.com/vishnurj06/RoadSense_AI` |
 
@@ -119,7 +119,101 @@ Last audited: **2026-07-16** (full codebase read-through by Senior Technical Arc
 | **A-5** | Real severity estimation | ✅ Completed | `ai/severity.py` is now **perspective-normalised**: the old bbox-area version scored `corr(depth, severity) = +0.711` (it measured camera distance, not pothole size). Now **−0.157** — 78% of the bias gone, all 3 buckets populated. Still *relative* not metric; MiDaS/depth remains the upgrade path. |
 | **A-6** | Real GPS (GPX track / phone sensor) | ✅ Completed | `ai/gps.py`: EXIF GPS → GPX interpolation → faked (loudly warned). Emits `speed_kmph`. Code verified; awaiting a real recorded drive to exercise it. |
 
+
 ---
+
+## 2b. Phase 3 (Beta) Progress Summary — Platform Track (Person B)
+
+| Task | Description | Status | Notes |
+|---|---|---|---|
+| **B3-0** | Close Phase-2 debt | ✅ Done | All sub-tasks complete. See breakdown below. |
+| **B3-1** | Fleet APIs (vehicles table, registry endpoints, camera health) | ✅ Done | See breakdown below. |
+| **B3-2** | Notifications (email digest, rate-limit, in-app bell) | ✅ Done | See breakdown below. |
+| **B3-3** | Road Health Score (formula, choropleth, normalisation) | ⬜ Planned | — |
+| **B3-4** | Model registry (`models` table, activate endpoint, Admin UI) | ✅ Done | See breakdown below. Pairs with A3-7. |
+| **B3-5** | Data enrichment — `road_name` (Nominatim) + `weather` (OpenWeather) | 🟡 Mostly done | Backend enrichment live (`enrichment.py`). `road_name` now surfaced through `/map` → popup (S5-11, §5d). **Remaining:** `weather` is stored but rendered nowhere. |
+| **B3-6** | GPS provenance — visually mark `faked` pins on map | ✅ Done | Marker + popup + filter all fail closed. Root-cause bug fixed 2026-07-17 (`/map` dropped `gps_source`). See §5c. |
+| **B3-7** | Performance validation (~10k reports, p95 for `/map` + `/analytics`) | ⬜ Planned | — |
+| **B3-8** | Frontend hardening (split `page.js`, add frontend tests, unknown-class safety) | ✅ Done | 35 tests passing. See breakdown below. |
+| **B3-9** | Security (encrypted uploads, GPS validation, `SECRET_KEY` rotation) | ⬜ Planned | — |
+
+### B3-0 Sub-task Breakdown
+
+| Sub-task | Status | Notes |
+|---|---|---|
+| ~~D-2b~~ Duplicate `POST /detect-image` removed | ✅ Done `780057d` | Kept handler at line 441 (S3 + clustering + cache). CI was red (ruff F811) — now green. |
+| ~~D-2~~ Delete stale `feat/ai-phase2` branch | ✅ Done | Deleted by user. Branch is gone. |
+| ~~G-5~~ Real `GET /admin/system-health` | ✅ Done | Replaced hardcoded literals with `psutil` CPU/memory/disk + live HTTP probe of `INFERENCE_URL/health`. `psutil>=5.9.0` added to `requirements.txt`. |
+| ~~G-12~~ Add `ai/` to CI syntax gate | ✅ Done | Added `python -m compileall -q ai backend` step to `.github/workflows/ci.yml` **before** ruff/pytest. D-0 process fix. |
+| ~~G-8~~ Update or delete `task.md` | ✅ Done | `task.md` deleted by user. |
+
+### B3-8 Sub-task Breakdown
+
+| Sub-task | Status | Notes |
+|---|---|---|
+| Split `page.js` (1064 lines) into role components | ✅ Done | `page.js` is now ~220 lines. Extracted `AuthorityDashboard`, `FleetDashboard`, `AdminDashboard`, `StatCards`, `Toast`, `Filters`, `UploadPanel`, `ReportLogs`. |
+| `src/lib/classUtils.js` — Contract v3 class registry | ✅ Done | Single source of truth for all 7 PRD classes. `getClassLabel()` / `getClassBadgeStyle()` title-case and neutrally badge any unknown future class — never 500. |
+| Unknown-class safety in `MapComponent.js` map popup | ✅ Done | Detection rows now use `getClassLabel` + `getClassBadgeStyle`. `key` uses `d.id ?? i` fallback. A future `speed_breaker` class renders as "Speed Breaker" with a neutral grey badge. |
+| `AdminDashboard` uses real B3-0 psutil fields | ✅ Done | `SystemHealthPanel` updated to display `disk_used_gb`, `db_pool_size`, `inference_status`, `inference_latency_ms` (the new fields from B3-0). |
+| Jest + React Testing Library setup | ✅ Done | `jest.config.js`, `jest.setup.js`, `__mocks__/`, `test` + `test:ci` npm scripts. |
+| **35 frontend tests passing** | ✅ Verified | `classUtils.test.js` (21 tests), `StatCards.test.jsx` (6), `Filters.test.jsx` (8). All green locally. |
+| CI updated — Jest runs in `frontend-lint-build` job | ✅ Done | `npm run test:ci` runs after ESLint and before `npm run build`. `--passWithNoTests` keeps CI green while suite grows. |
+
+### B3-1 Sub-task Breakdown
+
+| Sub-task | Status | Notes |
+|---|---|---|
+| `vehicles` SQLAlchemy model | ✅ Done | `backend/models.py` — `id`, `plate` (unique+indexed), `model`, `camera_id`, `status`, `last_seen`, `registered_at`. Camera health (`online`/`stale`/`offline`/`unknown`) is derived at query time, not stored. |
+| Alembic migration | ✅ Done | `migrations/versions/a7f3c91e0b25_add_vehicles_table.py` — `vehicles` table + unique index on `plate`. Down revision: `c12d856d463c`. |
+| `POST /fleet/vehicles` | ✅ Done | Registers a vehicle; 409 on duplicate plate; roles: `fleet`, `admin`. |
+| `GET /fleet/vehicles` | ✅ Done | Paginated list with derived `camera_health` + `report_count`; `status` and `camera_health` query filters; roles: `fleet`, `admin`, `authority`. |
+| `GET /fleet/vehicles/{id}/history` | ✅ Done | Paginated detection reports for a vehicle matched by `vehicle.plate == report.vehicle_id`. |
+| `last_seen` updated on every detect hit | ✅ Done | Both `POST /detect` and `POST /detect-image` update `vehicle.last_seen = report.timestamp` if the plate is registered. |
+| Fleet router wired into `main.py` | ✅ Done | `from routers import fleet as fleet_router` + `app.include_router(fleet_router.router)`. |
+| Vehicle schemas | ✅ Done | `VehicleCreate`, `VehicleResponse` (+ derived `camera_health`, `report_count`), `VehicleListResponse`, `VehicleHistoryResponse` in `schemas.py`. |
+| `FleetDashboard.js` updated | ✅ Done | Fetches `GET /fleet/vehicles` for vehicle list and `GET /fleet/vehicles/{id}/history` for the history drawer. Real data, not mock. |
+| Camera health thresholds | ✅ Done | `CAMERA_STALE_MINUTES=30`, `CAMERA_OFFLINE_MINUTES=120`. Defined in `routers/fleet.py` — no DB migration needed to change. |
+
+### B3-2 Sub-task Breakdown
+
+| Sub-task | Status | Notes |
+|---|---|---|
+| `NotificationPreference` SQLAlchemy model | ✅ Done | `backend/models.py` — `user_id` (FK, unique), `min_severity`, `email_enabled`, `area_filter` (JSON bbox), `digest_interval_seconds` (default 300). |
+| `Notification` SQLAlchemy model | ✅ Done | `backend/models.py` — `user_id` (nullable = broadcast), `type`, `title`, `body`, `resource_id`, `resource_type`, `is_read`, `created_at`. Back-references on `User`. |
+| Alembic migration | ✅ Done | `migrations/versions/b8e2f47a1c39_add_notifications_tables.py` — two tables + three indexes. Down revision: `a7f3c91e0b25`. |
+| `notification_service.py` | ✅ Done | Core service module: `trigger_high_severity_notification()`, `create_in_app_notification()`, SMTP mock + real SMTP (STARTTLS), Redis rate-limit with in-process dict fallback. |
+| Email rate-limiting / burst guard | ✅ Done | Per-user `digest_interval_seconds` window (default 300 s = 5 min). Last-send time stored in Redis key `notif:last_email:{user_id}` (TTL 24 h). Falls back to in-process dict if Redis unavailable. A 50-detection burst → 1 email per user. |
+| SMTP mock mode | ✅ Done | `SMTP_MOCK=1` (default). Logs would-be emails to stdout with full subject/body — zero configuration needed for dev. Set `SMTP_MOCK=0` + `SMTP_HOST/PORT/USER/PASS` for real delivery. |
+| `GET /notifications` | ✅ Done | Bell-icon feed; authority/admin also see broadcast (`user_id IS NULL`) notifications. Supports `?unread_only=true`, pagination. Returns `unread_count` for badge. |
+| `POST /notifications/{id}/read` | ✅ Done | Marks a single notification read. |
+| `POST /notifications/read-all` | ✅ Done | Bulk mark-read for all user notifications. |
+| `GET /notifications/preferences` | ✅ Done | Lazily creates defaults on first call. |
+| `PUT /notifications/preferences` | ✅ Done | Partial upsert — only supplied fields are changed. |
+| Notification trigger in `POST /detect` | ✅ Done | `cluster_report_to_issue()` now returns the new `Issue` (or `None`). Trigger fires after commit for `severity == "high"`. |
+| Notification trigger in `POST /detect-image` | ✅ Done | Same pattern as `/detect`. |
+| Notification trigger in `POST /verify` | ✅ Done | Collects all new high-severity issues from the clustering batch; fires one trigger per issue after commit. Rate-limiter collapses bursts. |
+| Notifications router wired into `main.py` | ✅ Done | `from routers import notifications as notifications_router` + `app.include_router(notifications_router.router)`. |
+| Pydantic schemas | ✅ Done | `NotificationResponse`, `NotificationListResponse`, `NotificationPreferenceResponse`, `NotificationPreferenceUpdate` added to `schemas.py`. |
+
+### B3-4 Sub-task Breakdown
+
+| Sub-task | Status | Notes |
+|---|---|---|
+| `AIModel` SQLAlchemy ORM model | ✅ Done | `backend/models.py` — `id`, `version` (unique, indexed), `artifact_url`, `sha256`, `classes` (JSON), `conf_threshold`, `metrics` (JSON), `is_active` (bool), `notes`, `registered_at`. |
+| Alembic migration | ✅ Done | `migrations/versions/d4f9e2b71a08_add_ai_models_table.py` — `ai_models` table + `ix_ai_models_is_active` index + `ix_ai_models_version` unique index. Down revision: `b8e2f47a1c39`. |
+| `GET /admin/models` | ✅ Done | Returns all versions, newest-first. Role: `admin` only. |
+| `POST /admin/models` | ✅ Done | Registers a new version. Enforces `version` uniqueness at app layer (409) and DB layer (unique index). Returns 201. |
+| `POST /admin/models/{id}/activate` | ✅ Done | **Atomic** two-step transaction: deactivate all → activate target. Idempotent if already active. 404 if not found. |
+| `Pydantic schemas` | ✅ Done | `AIModelCreate` + `AIModelResponse` added to `schemas.py`. |
+| `routers/admin.py` (new router) | ✅ Done | All three model registry endpoints, fully documented, `prefix="/admin"`. |
+| Admin router wired into `main.py` | ✅ Done | `from routers import admin as admin_router` + `app.include_router(admin_router.router)`. |
+| `get_active_model_version()` helper | ✅ Done | Utility in `main.py`: queries `AIModel.is_active IS TRUE`; used in `/detect-image` as fallback for `model_version`. |
+| Report tracing in `POST /detect-image` | ✅ Done | `model_version` now uses `inference_data.get("model_version") or get_active_model_version(db)` — never NULL when a model is registered. |
+| Report tracing in `POST /detect` | ✅ Done | Already uses `payload.model_version` from the AI service payload — unchanged, by design (telemetry reports carry explicit version). |
+| `ModelRegistryPanel` replaced in `AdminDashboard.js` | ✅ Done | Self-fetching component (`useEffect` + `useCallback`). Shows all versions: version tag, `is_active` badge, class pills, conf threshold, mAP50 from `metrics`. **Activate** button calls `POST /admin/models/{id}/activate`; active row highlighted green. Empty and loading states handled. |
+| Activation idempotency | ✅ Done | Backend returns 200 immediately if the target is already active (no DB write). Frontend button disabled during in-flight request. |
+
+
 
 ## 3. Active Technical Notes
 
@@ -154,6 +248,12 @@ Last audited: **2026-07-16** (full codebase read-through by Senior Technical Arc
 | `S3_SECRET_KEY` | `minioadmin` |
 | `S3_BUCKET_NAME` | `roadsense` |
 | `SECRET_KEY` | (set in `auth.py` — rotate before production) |
+| `SMTP_MOCK` | `1` (mock mode; set to `0` for real mail) |
+| `SMTP_HOST` | `smtp.example.com` |
+| `SMTP_PORT` | `587` |
+| `SMTP_USER` | `noreply@roadsense.ai` |
+| `SMTP_PASS` | (empty — set in env for real delivery) |
+| `SMTP_FROM` | `RoadSense AI <noreply@roadsense.ai>` |
 
 ### Key env vars for AI service
 
@@ -167,11 +267,13 @@ Last audited: **2026-07-16** (full codebase read-through by Senior Technical Arc
 
 ## 4. Verification & Testing Status
 
-- **Automated Tests:** 16 tests across `backend/test_api.py`, `backend/test_detect_image.py`,
-  `backend/test_stub.py`, `backend/test_repair.py`, and `backend/test_auth.py` — covering auth
-  limits, state-machine workflows, stub inference contract, upload pipeline (S3 mocking), and
-  spatial clustering. All **PASSING**.
-- **CI Status:** Both jobs (backend lint+test, frontend lint+build) expected green on `main`.
+- **Automated Tests:** **73 tests total** — 17 backend + 56 frontend.
+  - **Backend (17):** `backend/test_api.py`, `backend/test_detect_image.py`, `backend/test_stub.py`, `backend/test_repair.py`, `backend/test_auth.py` — auth, state-machine, stub, upload, spatial clustering, **B3-6 GPS provenance + B3-5 `road_name` end-to-end**. All **PASSING**.
+  - **Frontend (56):** `src/__tests__/classUtils.test.js` (21), `gpsUtils.test.js` (13), `mapUtils.test.js` (8), `StatCards.test.jsx` (6), `Filters.test.jsx` (8) — Contract v3 forward-compatibility, GPS provenance fail-closed, GeoJSON→UI adapter field preservation, component rendering, null-safety. All **PASSING**.
+- **CI Status:** ✅ **Both jobs green** as of S5-11 (2026-07-17), verified locally end-to-end:
+  `backend-lint-and-test` (compileall ✅ → ruff ✅ *All checks passed* → pytest ✅ 17) and
+  `frontend-lint-build` (ESLint ✅ exit 0 → Jest ✅ 56 → `next build` ✅). See §5d.
+
 - **AI model validation:** `potholevideos.mp4` — 43/55 frames detected at conf=0.30. Boxes correctly
   placed on real potholes. `dashcam.mp4` (Oregon highway, no potholes) — 3/57 frames fire (all false
   positives: treeline, dashboard bezel). See `ai/experiments.md` for full details.
@@ -187,14 +289,170 @@ Last audited: **2026-07-16** (full codebase read-through by Senior Technical Arc
 | ~~G-3~~ | ~~GPS is faked (Mumbai random jitter)~~ | ✅ Closed | Person A | **Done (A-6).** `ai/gps.py` — EXIF + GPX interpolation + `speed_kmph`; faking is now a loudly-warned last resort. Needs a real recorded drive to exercise end-to-end. |
 | ~~G-4~~ | ~~Severity heuristic unvalidated~~ | ✅ Closed | Person A | **Done (A-5).** Validated on 81 real detections: the old heuristic was measuring camera distance (corr +0.711), now perspective-normalised (−0.157). Residual: score is relative, not metric — thresholds need per-camera calibration. |
 | G-9 | `crack` class is conservative / unverified in the field | 🟡 Medium | Person A | Validated on RDD test (AP 0.499) but emits no cracks on `potholevideos.mp4`. Needs real crack footage to confirm. |
-| G-5 | `GET /admin/system-health` returns hardcoded values | 🟡 Medium | Person B | **Verified 2026-07-16:** `main.py:902` returns literal `cpu_usage_pct: 34.5` etc., comment says "Simulated system stats". `psutil` not in requirements. An admin will trust these numbers. |
-| G-6 | No fleet-specific backend endpoints | 🟢 Low | Person B | Fleet dashboard derives data from `vehicle_id` on reports — no registry API. |
-| G-7 | `page.js` is 1,064 lines — growing unwieldy | 🟢 Low | Person B | Refactor into role-specific sub-components before Phase 3 frontend work. |
-| G-8 | `task.md` is stale | 🟢 Low | — | Shows B-5/B-6 unchecked. `claude.md` is the canonical source. |
+| G-5 | ~~`GET /admin/system-health` returns hardcoded values~~ | ✅ **Closed B3-0** | Replaced with real `psutil` metrics + live `INFERENCE_URL/health` probe. |
+
+| G-6 | ~~No fleet-specific backend endpoints~~ | ✅ **Closed B3-1** | Fleet router live: `POST /fleet/vehicles`, `GET /fleet/vehicles`, `GET /fleet/vehicles/{id}/history`. Camera health derived from `last_seen`. `FleetDashboard.js` points at real endpoints. |
+| G-7 | ~~`page.js` is 1,064 lines — growing unwieldy~~ | ✅ **Closed B3-8** | Split into `AuthorityDashboard`, `FleetDashboard`, `AdminDashboard`, `StatCards`, `Toast`, `Filters`, `UploadPanel`, `ReportLogs`. `page.js` is now ~220 lines. |
+| G-8 | ~~`task.md` is stale~~ | ✅ **Closed B3-0** | `task.md` deleted by user. `claude.md` is the canonical source. |
 | ~~G-10~~ | ~~`POST /detect-image` defined twice — **CI was red** (`ruff F811`)~~ | ✅ Fixed `780057d` | Person B (verify) | Merge artifact from `3a3aa52`. Kept the handler at 441 (S3 + PostGIS clustering + cache invalidation); removed 711 (older B-1 with none of those). It was already dead code — FastAPI matches the first route — so zero runtime change. **B: confirm this was your intended handler.** |
 | **G-11** | 🔴 **Stale `feat/ai-phase2` branch is a landmine** | 🔴 High | Both | It holds pre-v3 `ai/` files. Merging it into `main` (`3a3aa52`) reverted A-5 and left `ai/detect.py` with raw conflict markers — `main` was tagged "phase 2 signoff" while it **did not parse** (fixed in `42b4edd`). **Delete the branch.** |
-| **G-12** | 🔴 **CI does not check `ai/` at all** | 🔴 High | Person B | CI runs `ruff check backend/` only. A `SyntaxError` in `ai/detect.py` reached `main` with **green CI**. Add at minimum `python -m compileall ai backend`. |
-| **G-13** | Weights still not handed to Person B | 🔴 High | Person A | Root cause of the two wrong AI audits *and* of G-11 (B cannot run the AI code, so cannot know which side of an `ai/` conflict is current). 2-minute fix, still open. |
+| ~~G-12~~ | ~~CI does not check `ai/` at all~~ | ✅ **Closed B3-0** | Added `python -m compileall -q ai backend` step to CI before ruff/pytest. D-0 process fix. |
+
+| **G-13** | ~~Weights still not handed to Person B~~ | ✅ Acknowledged | Person A | Context documented in `claude.md`. Not a blocker for S5 (stub covers dev). |
+
+---
+
+## 5b. S5 Pre-flight Fixes (2026-07-17)
+
+| Fix | File(s) | Notes |
+|---|---|---|
+| Stale handover files removed | `tracker.md`, `gemini_handover.md` (deleted) | Both were left over from the Gemini session handover. Environment is now clean — `claude.md` is the sole tracker. |
+| Dead analytics comment removed | `backend/main.py` line 842 | Removed `# get_analytics moved to routers/analytics.py` tombstone. No functional change — route was already gone. |
+| ruff lint — 25 warnings fixed | `enrichment.py`, `routers/analytics.py`, `main.py` | W291/W293 trailing whitespace + F401 unused `Optional` import left by Gemini. All auto-fixed + SQL string cleaned manually. All files now pass `ruff check` clean. |
+| GPS provenance marker enhanced | `frontend/src/components/MapComponent.js` | Replaced subtle dashed stroke with: (1) thick amber dashed ring around pin body visible at any zoom level, (2) amber `⚠` glyph centred inside pin, (3) reduced opacity to 55%. viewBox corrected to `0 0 26 42` for a standard Leaflet pin aspect ratio. iconSize/iconAnchor updated to match. |
+| GPS provenance popup badge added | `frontend/src/components/MapComponent.js` | Amber banner `"⚠ UNVERIFIED GPS — location is approximate"` injected into `IssuePopupContent` when `gps_source === "faked"`. Green `"✓ EXIF verified"` shown for real-GPS reports. |
+| `SECRET_KEY` guard fixed | `backend/auth.py` | Changed test-environment sentinel from `PYTEST_CURRENT_TEST` (set per-test, too late for `conftest.py` imports) to `"pytest" in sys.modules` (set at pytest startup, before collection). All 16 backend tests pass. |
+
+---
+
+## 5c. S5-10 — GPS Provenance Bug (B3-6) — RESOLVED 2026-07-17
+
+**Symptom:** An image uploaded via the web UI's "Demo Telemetry Upload" rendered `✓ GPS VERIFIED` /
+`GPS Source: EXIF` in green, instead of the amber faked-GPS warning.
+
+**Root cause — it was never the upload path.** Two plausible theories were investigated and both
+disproved:
+- ❌ *"The frontend sends the wrong `gps_source`"* — `page.js` `handleImageUpload()` never sends the
+  field at all, so the backend `Form("faked")` default at `main.py:538` correctly applied.
+- ❌ *"The backend extracts real EXIF and overwrites the flag"* — no EXIF extraction exists anywhere
+  in `POST /detect-image`. The DB row was always written with `gps_source="faked"`.
+
+The actual bug was in **`GET /map`**: the GeoJSON `properties` block copied `speed_kmph` and
+`model_version` off the latest report but **omitted `gps_source` entirely**. The field reached the
+browser as `undefined`, and every consumer then **failed open** — independently defaulting the
+missing value to a *real* source and rendering a faked pin as verified. The write path was correct
+the whole time; the read path silently laundered it.
+
+**Fixes applied:**
+
+| Fix | File | Notes |
+|---|---|---|
+| `/map` now emits `gps_source` | `backend/main.py` | Added to GeoJSON `properties`. **Fails closed across the cluster**: an `Issue` aggregates many `Report`s, so if *any* contributing report is `faked`, the pin is marked `faked` regardless of what the latest report says. |
+| Response schema no longer lies | `backend/schemas.py` | `ReportResponse.gps_source` default `"exif"` → `None`. An absent source means *unknown*, never a real source. Same latent bug on `GET /reports`. |
+| Single source of truth for the rule | `frontend/src/lib/gpsUtils.js` **(new)** | `getGpsProvenance()` → `real \| faked \| unknown`, plus `isRealGps()` / `getGpsSourceLabel()`. Contract v3 §3.2: only `exif` / `gpx` count as real. Mirrors the `classUtils.js` registry pattern. |
+| Popup fails closed + 3rd state | `frontend/src/components/MapComponent.js` | Was binary (faked vs. "verified"), so unknown → green. Now `faked` = amber, `exif`/`gpx` = green, **unknown = neutral grey "GPS provenance unknown"**. Removed the fabricated `gps_source \|\| "exif"` fallback and the misleading `gpsSource = "exif"` default param on `createMarkerIcon`. |
+| "Real GPS only" filter fails closed | `frontend/src/app/page.js` | Was `gps_source === "faked"` (excludes only explicit fakes, so unknown passed as real) → now `!isRealGps(...)`. |
+
+**Verification:**
+- New backend regression test `test_web_upload_gps_provenance_is_faked_end_to_end`
+  (`test_detect_image.py`) drives the real flow: upload with no `gps_source` → asserts the report
+  **and the `/map` payload** both report `faked`. **Confirmed it fails on the pre-fix code**
+  (`AssertionError: /map dropped gps_source`) — it genuinely catches this regression.
+- New `frontend/src/__tests__/gpsUtils.test.js` (13 tests) pins the fail-closed rule, explicitly
+  covering the `undefined` / `null` / unknown-source cases that caused this bug.
+- **Backend 17 passed** (was 16) · **Frontend 48 passed** (was 35). Total **65**.
+
+**Lesson:** the pin was only ever as trustworthy as the *least* defensive default in the chain. Three
+separate consumers each independently assumed a missing `gps_source` meant `"exif"`. Provenance must
+fail closed, and the rule belongs in exactly one module.
+
+> ✅ **The pre-existing CI failures noted here (ruff F401 + 4 × ESLint `set-state-in-effect`) have
+> since been fixed — see §5d. Both gates are green.**
+
+> 🔴 **The fix described in this section was INCOMPLETE — see §5d.** A second omission of the same
+> kind sat one hop downstream in the frontend adapter, so the amber pin still did not render.
+
+---
+
+## 5d. S5-11 — CI Green + B3-5 `road_name` Surfaced (2026-07-17)
+
+### First: the S5-10 fix above was INCOMPLETE
+
+While wiring `road_name` through `GET /map`, a **second omission of the same kind** surfaced.
+`page.js` flattened the `/map` FeatureCollection using an **explicit field whitelist** that did not
+list `gps_source`. So even with the backend fixed, the field was dropped one hop later and the amber
+warning **still never rendered**. §5c claimed the bug was fixed; it was not.
+
+**Why the tests missed it:** the backend test asserted on the `/map` *payload*; `gpsUtils.test.js`
+asserted on the *rule*. Nothing tested the adapter between them, so both stayed green while the live
+UI was broken. This is exactly the gap flagged at the time — *"verified through the test suite rather
+than by clicking through the running UI"*.
+
+**Fix:** the whitelist moved out of `page.js` into `frontend/src/lib/mapUtils.js`
+(`mapFeatureToIssue` / `mapFeaturesToIssues`) so it is a testable unit instead of an inline object
+literal, and `__tests__/mapUtils.test.js` pins every field — including a whole-shape `toEqual`, so a
+property the adapter forgets fails loudly rather than vanishing silently.
+
+> **Rule of thumb for this codebase:** a field on `GET /map` must be listed in **three** places to
+> reach the screen — the backend `properties` block, `mapUtils.mapFeatureToIssue`, and the consuming
+> component. Miss any one and it is `undefined` with no error anywhere.
+
+### Fixes applied
+
+| # | Fix | File(s) | Notes |
+|---|---|---|---|
+| 1 | **ruff green** | `migrations/versions/d7a1f0962038_...py` | Removed unused `import sqlalchemy as sa` (only `op` is used). `ruff check .` → **All checks passed**. |
+| 2 | **ESLint green** | `page.js`, `AdminDashboard.js`, `FleetDashboard.js` | 4 × `react-hooks/set-state-in-effect` resolved. Breakdown below. |
+| 3 | **B3-6 actually completed** | `frontend/src/lib/mapUtils.js` **(new)**, `page.js` | `gps_source` now survives the GeoJSON → UI hop. **This is the change that finally made B3-6 work.** |
+| 4 | **B3-5 `road_name` surfaced** | `backend/main.py`, `mapUtils.js` | `/map` properties now include `road_name`, read off the latest report (an `Issue` row carries none of its own). `MapComponent` already rendered it — it had simply never been sent a value. `weather` was left out deliberately: no component consumes it. |
+
+### How the ESLint errors were fixed (and why)
+
+`react-hooks/set-state-in-effect` is a **React Compiler** rule shipped in
+`eslint-config-next/core-web-vitals` (Next **16.2.10** · React **19.2.4** · `eslint-plugin-react-hooks`
+**7.1.1**). It forbids setState running *synchronously* during an effect, because that triggers a
+second cascading render.
+
+Rule behaviour was **established empirically** with a throwaway probe file rather than guessed: it
+flags any call **directly in an effect body** to a function that writes state, and does **not** model
+`await` across a function boundary. Nesting the call inside an inner function (async IIFE, `.then`,
+`setInterval`) satisfies it; `void load()` and `load().catch()` do **not**.
+
+Both halves below were needed — the wrapper alone would have been mere lint-silencing:
+
+1. **Made the fetchers genuinely await-first.** Each `fetchX` opened with `setLoading(true); setError(null);`,
+   which runs synchronously even inside an `async` function (a body executes synchronously up to its
+   first `await`). Removed — `loading` already initialises to `true` for the first load — so the first
+   statement is now `await fetch(...)` and no state is written synchronously. `setError(null)` moved to
+   the success path. Event-driven refetches raise the spinner from their own handler, where setState is
+   unrestricted.
+2. **Effects invoke them as async work:** `useEffect(() => { (async () => { await fetchX(); })(); }, [fetchX])`.
+
+| Site | Resolution |
+|---|---|
+| `page.js` — `setMounted(true)` | Replaced the `useState(false)` + effect hydration guard with `useIsHydrated()`, built on **`useSyncExternalStore`** (server snapshot `false`, client `true`). Same SSR safety, no setState in an effect. Verified with `next build` — `/` still prerenders as static. |
+| `page.js` — `fetchData` | Await-first, plus a `refresh()` helper for user-initiated reloads. |
+| `AdminDashboard.js` — `fetchModels` | Await-first; the Refresh button raises the spinner from its handler. |
+| `FleetDashboard.js` — `fetchHistory` | Await-first; Prev/Next handlers raise the spinner. |
+| `FleetDashboard.js` — `fetchVehicles` | Await-first; see the real bug below. |
+
+### Two real bugs found and fixed along the way
+
+| Bug | Detail |
+|---|---|
+| **Fleet registry blanked every 60 s** | `fetchVehicles` re-raised `vehiclesLoading` on every poll, and `VehicleRegistry` renders `{loading && "Loading vehicles..."}` / `{!loading && vehicles.map(...)}` — so the 60-second camera-health refresh wiped the whole list to a spinner every minute. The spinner is now strictly an initial-load state; the poll updates in place. |
+| **Admin "Refresh" never refreshed the admin panels** | `onClick={fetchData}` passed the click **event** as the `currentUser` argument, so `activeUser = currentUser \|\| user` became a `SyntheticEvent` and `activeUser?.role === "admin"` was never true — the users + system-health refetch silently never ran. Now `onClick={() => refresh()}`. |
+
+### Verification
+
+| Gate | Result |
+|---|---|
+| `python -m compileall -q ai backend` | ✅ OK |
+| `ruff check .` | ✅ **All checks passed** (was 1 error) |
+| `pytest` | ✅ **17 passed** |
+| `eslint src` | ✅ **exit 0** (was 4 errors) |
+| `jest` | ✅ **56 passed**, 5 suites (was 48) |
+| `next build` | ✅ Compiled; `/` prerendered static — guards the `useSyncExternalStore` change |
+
+- **Total tests: 73** (17 backend + 56 frontend).
+- New `__tests__/mapUtils.test.js` (8 tests) — **confirmed to fail on the pre-fix adapter** (3 of 8
+  fail when `gps_source` is removed), so it genuinely catches this regression.
+- Backend regression test extended to assert `road_name` is present in the `/map` payload.
+
+> ⚠️ **Still not driven against the live stack.** Every gate above is static or automated. The amber
+> pin and the road-name line have **not** been confirmed in a running browser against real
+> MinIO/PostGIS. One manual upload is worth doing before S5 sign-off — that is precisely the check
+> that would have caught the adapter omission the first time.
 
 ---
 
