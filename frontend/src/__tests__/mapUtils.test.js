@@ -59,6 +59,16 @@ describe("mapUtils — GeoJSON → UI adapter", () => {
     expect(mapFeatureToIssue(bare).priority).toBeUndefined();
   });
 
+  // The card title read `issue.class_name`, but the adapter never copied it, so
+  // every Live Issues / Action Queue row fell back to "Mixed" regardless of the
+  // real class — even though the DB and /map both carried it correctly.
+  it("carries class_name through — 'Mixed' label regression", () => {
+    expect(mapFeatureToIssue(feature()).class_name).toBe("pothole");
+    const bare = feature();
+    delete bare.properties.class_name;
+    expect(mapFeatureToIssue(bare).class_name).toBeUndefined();
+  });
+
   it("preserves every field the popup and filters read", () => {
     const issue = mapFeatureToIssue(feature());
     // If you add a property to GET /map, add it here — a field the adapter
@@ -67,6 +77,7 @@ describe("mapUtils — GeoJSON → UI adapter", () => {
       id: "abc-123",
       latitude: 18.5204,
       longitude: 73.8567,
+      class_name: "pothole",
       vehicle_id: "Clustered (3 reports)",
       timestamp: "2026-07-17T10:00:00",
       image_url: "http://minio/roadsense/x.jpg",

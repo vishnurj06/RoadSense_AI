@@ -1124,3 +1124,30 @@ could self-register as **admin** (privilege escalation). **Removed entirely** �
 **only** through the admin-gated `POST /admin/users`. The old register/login test was repointed at
 `/admin/users` (`test_create_login_me_logout`). **Backend 36 tests, all green.** *(Historical planning
 docs still mention `/auth/register` — left as-is; they describe past intent, not current code.)*
+
+### ✅ Bugfix: every issue card read "Mixed" — `class_name` dropped in the /map adapter (2026-07-18)
+
+**Symptom:** the Live Issues list + Action Queue labelled a pin **"Mixed"** even though its popup
+correctly showed `Pothole 98%`. Reported against issue `a3156b7e` (the `report-repair-test` seed
+fixture).
+
+**Diagnosis (dig, DB-verified):** *not* a data bug — the DB row's `class_name` was a clean `'pothole'`
+and `/map` served it (`main.py:874`). It was the **3-places rule** again: `mapFeatureToIssue`
+(`lib/mapUtils.js`) whitelisted 16 fields but **never copied `class_name`**, so `issue.class_name` was
+`undefined` for **every** issue → `MapView.js:88` / `QueueView.js:96` fell back to `"Mixed"` /
+`"Mixed hazard"` universally. The class *filter* buttons were unaffected — they read
+`item.detections[].class` (`page.js:144`), which the adapter *does* carry. Display-only, but universal.
+
+**Fix:** added `class_name: props.class_name` to `mapFeatureToIssue`; extended `mapUtils.test.js` with a
+dedicated `class_name` regression **and** the whole-shape `toEqual` (so a future drop fails loudly, not
+silently). **This is the 4th field this exact whitelist has silently dropped** (after `gps_source`,
+`road_name`, `is_verified`/`priority`) — the recurring tax of an explicit whitelist with no
+backend-contract test tying the two ends together.
+
+**Gates:** eslint ✅ · jest ✅ **66** (was 65) · next build ✅ (`/` still static).
+
+> **Note — `status='closed'` pins do NOT disappear from the map, by design.** `/map`
+> (`main.py:811`) returns `db.query(models.Issue).all()` with no status filter, and the frontend only
+> hides by status when a *specific* status is selected (`page.js:147`). Closing is a lifecycle state,
+> not a delete — an authority can still see/re-open it. Whether resolved issues should drop off the
+> live map by default is an **open product decision**, not a bug.

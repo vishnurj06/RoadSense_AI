@@ -27,6 +27,7 @@ export function mapFeatureToIssue(feature) {
     // GeoJSON is [lon, lat] — the UI wants them named and the right way round.
     latitude: coords[1],
     longitude: coords[0],
+    class_name: props.class_name, // the issue's title label — else the list/queue read "Mixed"
     vehicle_id: props.vehicle_id,
     timestamp: props.timestamp,
     image_url: props.image_url,
