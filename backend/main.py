@@ -318,36 +318,10 @@ def get_active_model_version(db: Session) -> str | None:
     return active.version if active else None
 
 
-@app.post(
-    "/auth/register",
-    response_model=schemas.UserResponse,
-    status_code=status.HTTP_201_CREATED,
-)
-def register_user(payload: schemas.UserRegister, db: Session = Depends(get_db)):
-    existing = (
-        db.query(models.User).filter(models.User.username == payload.username).first()
-    )
-    if existing:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Username already registered.",
-        )
-
-    db_user = models.User(
-        username=payload.username,
-        hashed_password=auth.hash_password(payload.password),
-        role=payload.role,
-    )
-    db.add(db_user)
-    try:
-        db.commit()
-        db.refresh(db_user)
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
-        )
-    return db_user
+# NOTE: the public POST /auth/register endpoint was REMOVED (security). It was
+# unauthenticated AND accepted an arbitrary `role`, so anyone could self-register
+# as admin. User creation now goes only through the admin-gated POST /admin/users
+# (RoleChecker(["admin"])), so a privileged role can only be granted by an operator.
 
 
 @app.post("/auth/login")
@@ -1007,11 +981,11 @@ def create_admin_user(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth.RoleChecker(["admin"])),
 ):
-    """Admin-only user creation.
+    """Admin-only user creation — the single path for creating accounts.
 
-    Distinct from the public /auth/register: because it is gated to admins, a
-    role (including 'admin') can only ever be granted by an existing operator —
-    self-registering into a privileged role is not possible here.
+    Gated to admins, so a role (including 'admin') can only ever be granted by an
+    existing operator. There is no public self-registration endpoint (the old
+    /auth/register was removed because it allowed unauthenticated role escalation).
     """
     existing = (
         db.query(models.User).filter(models.User.username == payload.username).first()

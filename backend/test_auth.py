@@ -12,42 +12,61 @@ def setup_auth_db():
     Base.metadata.create_all(bind=engine)
 
 
-def test_auth_register_and_login():
+def test_create_login_me_logout():
+    """User creation is admin-only (POST /admin/users); the created user can then
+    log in, read /auth/me, and log out. (The public /auth/register was removed.)"""
+    from database import SessionLocal
+    import models
+
+    # Seed an admin to create accounts with.
+    db = SessionLocal()
+    if not db.query(models.User).filter(models.User.username == "seed_admin").first():
+        db.add(
+            models.User(
+                username="seed_admin",
+                hashed_password=auth.hash_password("password"),
+                role="admin",
+            )
+        )
+        db.commit()
+    db.close()
+
+    reg_payload = {
+        "username": "test_driver",
+        "password": "driverpassword",
+        "role": "fleet",
+    }
+
+    # 1. Admin creates the user (public self-registration no longer exists).
     with TestClient(app) as client:
-        # 1. Register a new user
-        reg_payload = {
-            "username": "test_driver",
-            "password": "driverpassword",
-            "role": "fleet",
-        }
-        res = client.post("/auth/register", json=reg_payload)
+        client.cookies.set(
+            "access_token", auth.create_access_token(data={"sub": "seed_admin"})
+        )
+        res = client.post("/admin/users", json=reg_payload)
         assert res.status_code == 201
-        data = res.json()
-        assert data["username"] == "test_driver"
-        assert data["role"] == "fleet"
+        assert res.json()["username"] == "test_driver"
+        assert res.json()["role"] == "fleet"
 
-        # Try to register same username (fails)
-        res = client.post("/auth/register", json=reg_payload)
-        assert res.status_code == 400
+        # Duplicate username → 409.
+        assert client.post("/admin/users", json=reg_payload).status_code == 409
 
-        # 2. Login
-        login_payload = {"username": "test_driver", "password": "driverpassword"}
-        res = client.post("/auth/login", json=login_payload)
+    # 2. The created user logs in, reads /auth/me, and logs out.
+    with TestClient(app) as client:
+        res = client.post(
+            "/auth/login",
+            json={"username": "test_driver", "password": "driverpassword"},
+        )
         assert res.status_code == 200
         data = res.json()
         assert data["user"]["username"] == "test_driver"
         assert data["user"]["role"] == "fleet"
         assert "token" in data
-
-        # Check cookie is set
         assert "access_token" in client.cookies
 
-        # 3. Access GET /auth/me with login
         res = client.get("/auth/me")
         assert res.status_code == 200
         assert res.json()["username"] == "test_driver"
 
-        # 4. Logout
         res = client.post("/auth/logout")
         assert res.status_code == 200
         assert "access_token" not in client.cookies

@@ -1109,16 +1109,18 @@ always means the authority acted).
 - **Read-only map for admin:** `MapComponent` gained `canRepair` — the popup shows status + lifecycle
   but hides the change controls for admin; `MapView` quick-action buttons hidden (`onQuickAction`
   undefined).
-- **User CRUD (backend, admin-gated):** `POST /admin/users` (create — secure, unlike the public
-  `/auth/register` which still accepts an arbitrary role — ⚠️ **known vuln, not yet locked down**),
-  `DELETE /admin/users/{id}` (guards: no self-delete, no last-admin), `POST /admin/users/{id}/password`
-  (reset). Frontend `UserDirectory` now has an **Add-user form** + per-row **reset-password** (inline)
-  and **delete** (trash, hidden on own row). Tests: `test_admin_create_user`,
-  `test_admin_delete_and_reset_password` (auth 401/403, 409 dup, self/last-admin guards). **Backend 36
-  tests.**
+- **User CRUD (backend, admin-gated):** `POST /admin/users` (create), `DELETE /admin/users/{id}`
+  (guards: no self-delete, no last-admin), `POST /admin/users/{id}/password` (reset). Frontend
+  `UserDirectory` now has an **Add-user form** + per-row **reset-password** (inline) and **delete**
+  (trash, hidden on own row). Tests: `test_admin_create_user`, `test_admin_delete_and_reset_password`
+  (auth 401/403, 409 dup, self/last-admin guards).
 - **Telemetry Upload removed from admin System Health** — an image-upload (data-creation) box didn't
   belong in a monitoring tab or the view-only operator model. Still available in the Fleet dashboard.
 
-> ⚠️ **Flagged, not fixed:** public `POST /auth/register` is unauthenticated and accepts `role` → anyone
-> can self-register as **admin**. Lock it down (admin-only, or strip the `role` field) in a follow-up;
-> left separate from this batch. Tests use it, so a fix must update `test_auth.py`.
+### ✅ Security: public `/auth/register` removed (2026-07-18)
+
+The public `POST /auth/register` was **unauthenticated and accepted an arbitrary `role`** → anyone
+could self-register as **admin** (privilege escalation). **Removed entirely** — user creation now goes
+**only** through the admin-gated `POST /admin/users`. The old register/login test was repointed at
+`/admin/users` (`test_create_login_me_logout`). **Backend 36 tests, all green.** *(Historical planning
+docs still mention `/auth/register` — left as-is; they describe past intent, not current code.)*
