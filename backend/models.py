@@ -34,6 +34,10 @@ class Issue(Base):
     # code item #1: True once >=2 DISTINCT vehicles have reported this issue.
     # 'detection_count' counts reports; this counts corroborating *vehicles*.
     is_verified = Column(Boolean, nullable=False, default=False, server_default="false")
+    # Who the repair is dispatched to (crew / contractor / team). Free text, not a
+    # user FK: repair crews are typically external, not app accounts. Optional —
+    # an issue can be "assigned" (queued) before a specific crew is named.
+    assigned_to = Column(String(120), nullable=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
     updated_at = Column(
         DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow

@@ -8,8 +8,11 @@ import { SeverityBadge, Chip, EmptyState } from "@/components/ui/Primitives";
 import { getMaxSeverity, getClassLabel, getStatusBadgeStyle } from "@/lib/classUtils";
 import { stagger, rowIn, T } from "@/lib/motion";
 
-const NEXT_STATUS = { detected: "approved", approved: "repair", repair: "completed" };
-const ACTION_LABEL = { detected: "Approve", approved: "Dispatch", repair: "Complete" };
+// Must mirror the backend VALID_TRANSITIONS — approved dispatches to "assigned"
+// (approved→repair is rejected 400). Assignee is captured in the map popup or
+// the Action Queue, so a one-click dispatch here queues the crew as TBD.
+const NEXT_STATUS = { detected: "approved", approved: "assigned", assigned: "repair", repair: "completed" };
+const ACTION_LABEL = { detected: "Approve", approved: "Dispatch", assigned: "Start repair", repair: "Complete" };
 
 /**
  * MapView — the issue index for the canvas behind it.

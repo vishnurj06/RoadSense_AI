@@ -111,3 +111,115 @@ def test_repair_workflow(client):
     assert len(logs) == 3
     assert logs[0]["new_status"] == "repair"
     assert logs[0]["old_status"] == "assigned"
+
+
+def test_repair_assignment(client):
+    # New issue far from test_repair_workflow's pin (distinct vehicle_id too, so
+    # the teleportation guard never compares the two — see §5f).
+    payload = {
+        "report_id": "report-assign-test",
+        "vehicle_id": "assign-test-car",
+        "timestamp": "2026-07-14T20:00:00+05:30",
+        "gps": {"lat": 28.6139, "lon": 77.2090},
+        "detections": [
+            {
+                "class": "pothole",
+                "confidence": 0.88,
+                "bbox": [0, 0, 10, 10],
+                "severity": "high",
+            }
+        ],
+    }
+    assert client.post("/detect", json=payload).status_code == 201
+
+    # Locate the new issue by its coordinates.
+    features = client.get("/map").json()["features"]
+    feat = next(
+        f for f in features if abs(f["geometry"]["coordinates"][0] - 77.2090) < 1e-4
+    )
+    issue_id = feat["properties"]["issue_id"]
+    assert feat["properties"]["assigned_to"] is None
+
+    # detected -> approved (assignee on a non-'assigned' transition is ignored).
+    res = client.post(
+        "/repair",
+        json={"issue_id": issue_id, "status": "approved", "assignee": "ignored-crew"},
+    )
+    assert res.status_code == 200
+    assert res.json()["assigned_to"] is None
+
+    # approved -> assigned WITH an assignee: stored on the issue + folded into
+    # the immutable audit note.
+    res = client.post(
+        "/repair",
+        json={
+            "issue_id": issue_id,
+            "status": "assigned",
+            "assignee": "Ward 12 PWD Crew",
+            "notes": "urgent",
+        },
+    )
+    assert res.status_code == 200
+    assert res.json()["assigned_to"] == "Ward 12 PWD Crew"
+
+    # /map surfaces the assignee (the 3-places hop is intact).
+    features = client.get("/map").json()["features"]
+    feat = next(f for f in features if f["properties"]["issue_id"] == issue_id)
+    assert feat["properties"]["assigned_to"] == "Ward 12 PWD Crew"
+
+    # The assignee is on the audit record for that transition.
+    logs = client.get(f"/issues/{issue_id}/audit-log").json()
+    assert logs[0]["new_status"] == "assigned"
+    assert "Ward 12 PWD Crew" in logs[0]["notes"]
+
+    # Un-dispatch: assigned -> approved clears the assignee (no stale crew).
+    res = client.post("/repair", json={"issue_id": issue_id, "status": "approved"})
+    assert res.status_code == 200
+    assert res.json()["assigned_to"] is None
+
+
+def test_reopen_closed_issue(client):
+    # Backs the popup "Reopen issue" button: a closed issue can go back to
+    # 'detected'. Distinct vehicle_id/location to avoid the §5f teleport trap.
+    payload = {
+        "report_id": "report-reopen-test",
+        "vehicle_id": "reopen-test-car",
+        "timestamp": "2026-07-14T20:00:00+05:30",
+        "gps": {"lat": 12.9716, "lon": 77.5946},
+        "detections": [
+            {
+                "class": "pothole",
+                "confidence": 0.80,
+                "bbox": [0, 0, 10, 10],
+                "severity": "low",
+            }
+        ],
+    }
+    assert client.post("/detect", json=payload).status_code == 201
+
+    features = client.get("/map").json()["features"]
+    feat = next(
+        f for f in features if abs(f["geometry"]["coordinates"][0] - 77.5946) < 1e-4
+    )
+    issue_id = feat["properties"]["issue_id"]
+
+    # Drive it to closed: detected -> approved -> closed (approved allows closed).
+    assert (
+        client.post(
+            "/repair", json={"issue_id": issue_id, "status": "approved"}
+        ).status_code
+        == 200
+    )
+    res = client.post("/repair", json={"issue_id": issue_id, "status": "closed"})
+    assert res.status_code == 200
+    assert res.json()["status"] == "closed"
+
+    # Reopen: closed -> detected (what the button POSTs). Returns to the queue.
+    res = client.post("/repair", json={"issue_id": issue_id, "status": "detected"})
+    assert res.status_code == 200
+    assert res.json()["status"] == "detected"
+
+    # The reopen is on the audit trail.
+    logs = client.get(f"/issues/{issue_id}/audit-log").json()
+    assert logs[0]["old_status"] == "closed"
+    assert logs[0]["new_status"] == "detected"

@@ -40,6 +40,7 @@ export function mapFeatureToIssue(feature) {
     status: props.status,
     is_verified: props.is_verified, // #1 — ≥2-vehicle verification must survive the hop
     priority: props.priority, // #3 — urgency score must survive the hop
+    assigned_to: props.assigned_to, // repair assignee (crew/contractor) must survive the hop
   };
 }
 

@@ -1151,3 +1151,85 @@ backend-contract test tying the two ends together.
 > hides by status when a *specific* status is selected (`page.js:147`). Closing is a lifecycle state,
 > not a delete — an authority can still see/re-open it. Whether resolved issues should drop off the
 > live map by default is an **open product decision**, not a bug.
+
+### ✅ Feature: repair assignment — assign an issue to a crew/contractor (2026-07-18)
+
+**Gap found (dig):** the workflow had an `assigned` *status* but **no way to record who it was
+assigned to** — the `Issue` model had no assignee field, and `/repair` only flipped status + logged
+`changed_by` (who *clicked*, not who the work goes *to*). An issue could be "assigned" with the system
+having no idea to whom.
+
+**Design:** `Issue.assigned_to` is **optional free text** (crew / contractor / team) — NOT a user FK,
+because repair crews are typically external, not app accounts; and optional because an issue can be
+queued as "assigned" before a specific crew is named.
+
+- **Backend:** `models.py` new `assigned_to = Column(String(120), nullable=True)`; migration
+  `c3d8e1a9f472_add_assigned_to_to_issues.py` (chains onto `f2a7b9c4d1e8`; **alembic head is now
+  `c3d8e1a9f472`, single head**). `schemas.IssueStatusUpdate` gains `assignee` (in); `IssueResponse`
+  gains `assigned_to` (out). `/repair` sets `assigned_to` when moving to `assigned` with an assignee **and
+  folds it into the immutable audit note** (`"Assigned to X. …"`), and **clears it** on any move back to
+  `detected`/`approved`/`closed` (no stale crew on a re-opened issue). Exposed on `/map` properties.
+- **Frontend:** `mapUtils.js` whitelists `assigned_to` (the **3-places rule** — 5th field now). Map popup
+  shows an "Assign to (crew/contractor)" input **only when the target status is `assigned`**, plus an
+  "Assigned to" fact Row. `QueueView` "Dispatch" now opens a one-row inline assignee form (Enter/Esc,
+  ✓/✗) and shows the crew (⛑ `HardHat`) on the card. `page.js handleQuickAction` takes an optional
+  `assignee`.
+- **Bugfix bundled:** `MapView.js NEXT_STATUS` was stale (`approved → repair`, which the backend
+  **rejects 400** — `approved` only allows `assigned`/`closed`). Fixed to mirror the backend
+  (`approved → assigned → repair`) + added the `assigned`/"Start repair" label. QueueView was already
+  correct.
+- **Tests:** backend `test_repair_assignment` (assignee stored + on `/map` + in audit note; ignored on
+  non-`assigned` transitions; cleared on un-dispatch; distinct vehicle_id/location to dodge the §5f
+  teleport-pollution trap). Frontend `mapUtils.test.js` `assigned_to` regression + whole-shape `toEqual`.
+- **Gates:** backend compileall ✅ · ruff check ✅ · ruff format ✅ (38) · pytest ✅ **37** (`TZ=UTC`) ·
+  alembic single head ✅. Frontend eslint ✅ · jest ✅ **67** · next build ✅ (`/` still static).
+- ⚠️ **Migration not yet run against the live DB** (`alembic upgrade head` → `c3d8e1a9f472`); tests use
+  `create_all`, not migrations. Not clicked in a live browser yet (standing caveat).
+
+### ✅ Bugfix + UX: closed is terminal, and the popup no longer submits a stale status (2026-07-18)
+
+**Reported:** a `closed` issue's popup still showed the workflow dropdown ("Detected") + Update button,
+and clicking it threw **`Invalid transition: closed → closed`** — while the dropdown *displayed*
+"Detected". That display/submit mismatch was the tell.
+
+**Root cause (deeper than "closed can't reopen"):** `IssuePopupContent`'s `statusInput`
+(`MapComponent.js`) was initialised **once** and never resynced. The popup stays mounted across an
+update, so after any status change `statusInput` held a value no longer in `validNextStates`; a
+controlled `<select>` with a value matching no option **displays its first option but submits the stale
+value** → `X → X` 400s. **Not specific to closed** — any *second* transition in the same open popup
+(e.g. `detected→approved` then the box shows "Assigned" but submits "approved") could trip it.
+
+**Fixes (both):**
+1. **Stale-state root cause** — replaced the raw `statusInput` with a **derived `targetStatus`** that
+   reconciles the selection against the current `validNextStates` every render
+   (`validNextStates.includes(statusInput) ? statusInput : validNextStates[0]`). The select value, the
+   assignee-input condition, and the submit all use it, so the box can never display one option and
+   submit another. No resync effect (dodges `set-state-in-effect`).
+2. **Closed is terminal in the UI** (the user's point) — `TERMINAL_STATUSES = {closed}`; a closed issue
+   shows *"Workflow closed — this issue is resolved."* (mirrors the "completed" note), **no dropdown, no
+   button**. Backend `closed→detected` (reopen) is left intact but unsurfaced — reopening, if ever
+   wanted, belongs in a deliberate explicit action, not a stray dropdown option. (Queue/MapView already
+   omit closed — not in `NEXT_STATUS`/`STAGES`.)
+- **Gates:** eslint ✅ · jest ✅ **67** · next build ✅ (`/` still static). MapComponent isn't covered by
+  the Jest suite (count unchanged); not yet clicked live.
+
+### ✅ Feature: "Reopen issue" button on closed pins (2026-07-18)
+
+Follow-up to the terminal-closed change above: closing an issue left **no UI path to reopen** (only a
+raw `/repair` API call). Added the deliberate explicit action promised there.
+
+- **Frontend (`MapComponent.js`):** the closed-terminal note now carries a muted secondary **"Reopen
+  issue"** button (⟲ `RotateCcw`) — `window.confirm` → `handleStatusSubmit("detected")`. Only
+  authorities reach this branch (admin hits the `!canRepair` "view only" case). `handleStatusSubmit`
+  was generalised to take an optional `overrideStatus` so Reopen reuses the same fetch/401/error path;
+  its assignee-body condition now keys off `submitStatus` (so a reopen never sends an assignee). Also
+  fixed the main Update button's `onClick={handleStatusSubmit}` → `onClick={() => handleStatusSubmit()}`
+  (it was passing the click event as the arg — the §5d event-as-arg trap; harmless now via a `typeof`
+  guard, but corrected).
+- **Backend:** already supported — `VALID_TRANSITIONS["closed"] = {"detected"}`, `/repair` is
+  authority/admin, and reopening clears `assigned_to`. **No backend change needed**; wired the button to
+  the existing endpoint.
+- **Test (the "connect FE to BE" proof):** backend `test_reopen_closed_issue` drives detected → approved
+  → closed → **detected** and asserts the reopen lands + is on the audit trail.
+- **Gates:** backend ruff ✅ · pytest ✅ **38** (`TZ=UTC`). Frontend eslint ✅ · jest ✅ **67** · next
+  build ✅ (`/` still static). Not yet clicked live.

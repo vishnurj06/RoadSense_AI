@@ -2,7 +2,7 @@
 
 import React, { useMemo, useState } from "react";
 import { motion } from "motion/react";
-import { CheckCircle2, ArrowRight, Truck } from "lucide-react";
+import { CheckCircle2, ArrowRight, Truck, Check, X, HardHat } from "lucide-react";
 import { SeverityBadge, Chip, EmptyState } from "@/components/ui/Primitives";
 import { getMaxSeverity, getClassLabel, getStatusBadgeStyle, STATUS_ORDER } from "@/lib/classUtils";
 import { stagger, rowIn, T } from "@/lib/motion";
@@ -23,6 +23,28 @@ const STAGES = ["detected", "approved", "assigned", "repair"];
  */
 export default function QueueView({ issues, onQuickAction }) {
   const [stage, setStage] = useState("all");
+  // Inline assignee capture: dispatching to "assigned" opens a one-row form so
+  // the authority can name the crew as they dispatch, rather than assigning
+  // blind and editing later. Only one row is ever "assigning" at a time.
+  const [assigningId, setAssigningId] = useState(null);
+  const [assigneeText, setAssigneeText] = useState("");
+
+  // Non-dispatch transitions fire immediately; dispatching opens the assignee
+  // form (assignee is optional — an issue can be queued before a crew is named).
+  const startAction = (issue, next) => {
+    if (next === "assigned") {
+      setAssigneeText(issue.assigned_to || "");
+      setAssigningId(issue.id);
+    } else {
+      onQuickAction(issue.id, next);
+    }
+  };
+
+  const confirmAssign = (issueId) => {
+    onQuickAction(issueId, "assigned", assigneeText.trim());
+    setAssigningId(null);
+    setAssigneeText("");
+  };
 
   const pending = useMemo(() => {
     const rank = { high: 0, medium: 1, low: 2 };
@@ -106,12 +128,12 @@ export default function QueueView({ issues, onQuickAction }) {
                         </span>
                       )}
                     </div>
-                    {next && (
+                    {next && assigningId !== issue.id && (
                       <motion.button
                         type="button"
                         whileTap={{ scale: 0.95 }}
                         transition={T.fast}
-                        onClick={() => onQuickAction(issue.id, next)}
+                        onClick={() => startAction(issue, next)}
                         className="bg-accent/10 border-accent/25 text-accent hover:bg-accent/20 flex shrink-0 cursor-pointer items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px] font-semibold transition-colors"
                       >
                         <Truck className="h-3 w-3" />
@@ -120,6 +142,41 @@ export default function QueueView({ issues, onQuickAction }) {
                       </motion.button>
                     )}
                   </div>
+
+                  {/* Inline dispatch form — name the crew as you assign. */}
+                  {assigningId === issue.id && (
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="text"
+                        autoFocus
+                        value={assigneeText}
+                        onChange={(e) => setAssigneeText(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") confirmAssign(issue.id);
+                          if (e.key === "Escape") setAssigningId(null);
+                        }}
+                        placeholder="Assign to (crew / contractor)…"
+                        maxLength={120}
+                        className="bg-sunken border-line text-ink placeholder:text-ink-3 focus:border-accent/50 h-7 min-w-0 flex-1 rounded-lg border px-2 text-[11px] outline-none"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => confirmAssign(issue.id)}
+                        title="Dispatch"
+                        className="border-accent/30 bg-accent/15 text-accent hover:bg-accent/25 flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-lg border transition-colors"
+                      >
+                        <Check className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setAssigningId(null)}
+                        title="Cancel"
+                        className="border-line bg-sunken/60 text-ink-3 hover:text-ink-2 flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-lg border transition-colors"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  )}
 
                   {/* Lifecycle position, shown structurally: the workflow is
                       ordinal state, not good/bad, so it has no claim on the
@@ -139,6 +196,13 @@ export default function QueueView({ issues, onQuickAction }) {
                     {issue.latitude?.toFixed(4)}, {issue.longitude?.toFixed(4)}
                     {issue.road_name && ` · ${issue.road_name}`}
                   </span>
+
+                  {issue.assigned_to && (
+                    <span className="text-accent flex items-center gap-1 text-[10px] font-medium">
+                      <HardHat className="h-3 w-3" />
+                      {issue.assigned_to}
+                    </span>
+                  )}
                 </motion.li>
               );
             })}

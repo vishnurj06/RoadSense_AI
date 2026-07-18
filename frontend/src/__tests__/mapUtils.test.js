@@ -20,6 +20,7 @@ const feature = (props = {}) => ({
     road_name: "Fergusson College Road",
     is_verified: true,
     priority: 85,
+    assigned_to: "Ward 12 PWD Crew",
     detections: [{ id: "d1", class: "pothole", severity: "high" }],
     ...props,
   },
@@ -69,6 +70,13 @@ describe("mapUtils — GeoJSON → UI adapter", () => {
     expect(mapFeatureToIssue(bare).class_name).toBeUndefined();
   });
 
+  it("carries assigned_to through — repair-assignment regression", () => {
+    expect(mapFeatureToIssue(feature()).assigned_to).toBe("Ward 12 PWD Crew");
+    const bare = feature();
+    delete bare.properties.assigned_to;
+    expect(mapFeatureToIssue(bare).assigned_to).toBeUndefined();
+  });
+
   it("preserves every field the popup and filters read", () => {
     const issue = mapFeatureToIssue(feature());
     // If you add a property to GET /map, add it here — a field the adapter
@@ -90,6 +98,7 @@ describe("mapUtils — GeoJSON → UI adapter", () => {
       status: "detected",
       is_verified: true,
       priority: 85,
+      assigned_to: "Ward 12 PWD Crew",
     });
   });
 

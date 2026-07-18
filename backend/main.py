@@ -880,6 +880,7 @@ def get_map_geojson(
                 "is_verified": issue.is_verified,
                 # code item #3: urgency score 0-100 (severity + sightings + age).
                 "priority": issue.priority,
+                "assigned_to": issue.assigned_to,
                 "timestamp": issue.updated_at.isoformat(),
                 "vehicle_id": f"Clustered ({issue.detection_count} reports)",
                 "speed_kmph": latest_report.speed_kmph if latest_report else None,
@@ -1164,6 +1165,22 @@ def update_issue_status(
     issue.status = new_status
     issue.updated_at = datetime.utcnow()
 
+    # 3b. Repair assignment (crew/contractor). Set when dispatching to 'assigned';
+    # cleared when the issue moves back to a pre-assignment/reset state so a stale
+    # assignee never lingers on a re-opened or un-dispatched issue.
+    effective_notes = payload.notes
+    assignee = (payload.assignee or "").strip()
+    if new_status == "assigned" and assignee:
+        issue.assigned_to = assignee
+        # Fold the assignee into the immutable audit note so WHO it was assigned
+        # to is on the record at the moment of assignment, not just current state.
+        prefix = f"Assigned to {assignee}."
+        effective_notes = (
+            f"{prefix} {payload.notes}".strip() if payload.notes else prefix
+        )
+    elif new_status in ("detected", "approved", "closed"):
+        issue.assigned_to = None
+
     # 4. Write to audit log
     audit_log = models.IssueAuditLog(
         id=str(uuid.uuid4()),
@@ -1171,7 +1188,7 @@ def update_issue_status(
         changed_by=current_user.username,
         old_status=old_status,
         new_status=new_status,
-        notes=payload.notes,
+        notes=effective_notes,
         timestamp=datetime.utcnow(),
     )
     db.add(audit_log)

@@ -336,12 +336,16 @@ export default function Dashboard() {
     router.push("/login");
   };
 
-  const handleQuickAction = async (issueId, nextStatus) => {
+  const handleQuickAction = async (issueId, nextStatus, assignee) => {
     try {
       const res = await fetch(`${BACKEND_URL}/repair`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ issue_id: issueId, status: nextStatus }),
+        body: JSON.stringify({
+          issue_id: issueId,
+          status: nextStatus,
+          assignee: nextStatus === "assigned" ? assignee : undefined,
+        }),
         credentials: "include",
       });
       if (res.ok) {

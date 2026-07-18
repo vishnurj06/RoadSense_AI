@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { MapContainer, TileLayer, Marker, Popup, Polygon, ZoomControl } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
+import { RotateCcw } from "lucide-react";
 import {
   getClassLabel,
   getClassBadgeStyle,
@@ -138,19 +139,39 @@ function Row({ label, children }) {
   );
 }
 
+// Terminal lifecycle state — no controls, just a resolved note. "closed" allows
+// closed→detected on the backend (reopen), but that is a deliberate action, not
+// a stray dropdown option; the UI treats closed as the end of the line.
+const TERMINAL_STATUSES = new Set(["closed"]);
+
 function IssuePopupContent({ report, onRefresh, canRepair = true }) {
   const router = useRouter();
   const currentStatus = report.status || "detected";
   const validNextStates = statusTransitionMap[currentStatus.toLowerCase()] || [];
+  const isTerminal = TERMINAL_STATUSES.has(currentStatus.toLowerCase());
 
   const [statusInput, setStatusInput] = useState(validNextStates[0] || "");
   const [notesInput, setNotesInput] = useState("");
+  const [assigneeInput, setAssigneeInput] = useState(report.assigned_to || "");
   const [updating, setUpdating] = useState(false);
   const [updateError, setUpdateError] = useState("");
 
-  const handleStatusSubmit = async () => {
-    const targetStatus = statusInput || validNextStates[0];
-    if (!targetStatus) {
+  // Reconcile the selection against the CURRENT valid transitions every render.
+  // The popup stays open across an update, so statusInput can hold a value that
+  // is no longer valid for the new status — the <select> would then DISPLAY its
+  // first option while SUBMITTING the stale one, producing "X -> X" 400s. A
+  // derived value that always falls back to a real option kills that class of
+  // bug without a resync effect.
+  const targetStatus = validNextStates.includes(statusInput)
+    ? statusInput
+    : validNextStates[0] || "";
+
+  // `overrideStatus` lets the Reopen action reuse this exact fetch/401/error
+  // path with a fixed target (closed → detected) instead of the dropdown value.
+  const handleStatusSubmit = async (overrideStatus) => {
+    const submitStatus =
+      typeof overrideStatus === "string" ? overrideStatus : targetStatus;
+    if (!submitStatus) {
       setUpdateError("No valid next status available.");
       return;
     }
@@ -162,8 +183,11 @@ function IssuePopupContent({ report, onRefresh, canRepair = true }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           issue_id: report.id,
-          status: targetStatus,
+          status: submitStatus,
           notes: notesInput,
+          // Only meaningful for the 'assigned' transition; backend ignores it
+          // otherwise. Lets an authority name the crew as they dispatch.
+          assignee: submitStatus === "assigned" ? assigneeInput : undefined,
         }),
         credentials: "include",
       });
@@ -287,6 +311,7 @@ function IssuePopupContent({ report, onRefresh, canRepair = true }) {
           </Row>
         )}
         {report.road_name && <Row label="Location">{report.road_name}</Row>}
+        {report.assigned_to && <Row label="Assigned to">{report.assigned_to}</Row>}
         {report.model_version && (
           <Row label="Model">
             <span className="font-mono text-[9px]">{report.model_version}</span>
@@ -332,10 +357,41 @@ function IssuePopupContent({ report, onRefresh, canRepair = true }) {
           <span className="text-ink-3 text-[10px] italic">
             View only — repair status is managed by the authority.
           </span>
+        ) : isTerminal ? (
+          // Closed is the end of the line — no forward dropdown. Reopen is the
+          // one exception: a deliberate, confirmed action (backend closed →
+          // detected), styled as a muted secondary control so "closed" still
+          // reads as done. Only authorities reach this branch — admin (view
+          // only) is handled by the !canRepair case above.
+          <div className="flex flex-col gap-1.5">
+            <span className="text-ink-3 text-[10px] italic">
+              Workflow closed — this issue is resolved.
+            </span>
+            {updateError && (
+              <span className="text-critical text-[9px] font-medium">{updateError}</span>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                if (
+                  window.confirm(
+                    "Reopen this closed issue? It will return to the queue as Detected."
+                  )
+                ) {
+                  handleStatusSubmit("detected");
+                }
+              }}
+              disabled={updating}
+              className="border-line bg-sunken/60 text-ink-2 hover:text-ink hover:border-accent/30 flex w-full cursor-pointer items-center justify-center gap-1.5 rounded-lg border py-1.5 text-[11px] font-medium transition-colors disabled:opacity-50"
+            >
+              <RotateCcw className="h-3 w-3" />
+              {updating ? "Reopening…" : "Reopen issue"}
+            </button>
+          </div>
         ) : validNextStates.length > 0 ? (
           <div className="flex flex-col gap-1.5">
             <select
-              value={statusInput}
+              value={targetStatus}
               onChange={(e) => setStatusInput(e.target.value)}
               className="bg-sunken border-line text-ink focus:border-accent/50 h-7 cursor-pointer rounded-lg border px-2 text-[11px] capitalize outline-none"
             >
@@ -345,6 +401,18 @@ function IssuePopupContent({ report, onRefresh, canRepair = true }) {
                 </option>
               ))}
             </select>
+            {/* Assignee — only when dispatching. Optional: an issue can be marked
+                'assigned' (queued) before a crew is named. */}
+            {targetStatus === "assigned" && (
+              <input
+                type="text"
+                placeholder="Assign to (crew / contractor)…"
+                value={assigneeInput}
+                onChange={(e) => setAssigneeInput(e.target.value)}
+                maxLength={120}
+                className="bg-sunken border-line text-ink placeholder:text-ink-3 focus:border-accent/50 h-7 rounded-lg border px-2 text-[11px] outline-none"
+              />
+            )}
             <input
               type="text"
               placeholder="Audit comment…"
@@ -357,7 +425,7 @@ function IssuePopupContent({ report, onRefresh, canRepair = true }) {
             )}
             <button
               type="button"
-              onClick={handleStatusSubmit}
+              onClick={() => handleStatusSubmit()}
               disabled={updating}
               className="bg-accent/15 border-accent/30 text-accent hover:bg-accent/25 w-full cursor-pointer rounded-lg border py-1.5 text-[11px] font-semibold transition-colors disabled:opacity-50"
             >

@@ -93,6 +93,12 @@ class IssueStatusUpdate(BaseModel):
     notes: Optional[str] = Field(
         None, description="Optional text comment explaining the update"
     )
+    assignee: Optional[str] = Field(
+        None,
+        max_length=120,
+        description="Crew/contractor/team to dispatch the repair to. Recorded when "
+        "moving to 'assigned'; ignored otherwise.",
+    )
 
 
 class AuditLogResponse(BaseModel):
@@ -120,6 +126,7 @@ class IssueResponse(BaseModel):
     detection_count: int
     is_verified: bool
     priority: int
+    assigned_to: Optional[str]
     created_at: datetime
     updated_at: datetime
 
