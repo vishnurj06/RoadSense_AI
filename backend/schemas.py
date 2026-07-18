@@ -149,6 +149,10 @@ class UserRoleUpdate(BaseModel):
     role: str = Field(..., pattern="^(admin|authority|fleet)$")
 
 
+class PasswordReset(BaseModel):
+    password: str = Field(..., min_length=6)
+
+
 # ── Vehicle schemas (B3-1) ─────────────────────────────────────────────────
 
 

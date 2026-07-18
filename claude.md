@@ -1078,3 +1078,47 @@ report shows **"⏳ UNVERIFIED"**.
 > are demoable without curl. Migration note: the dev `roadsense` DB is shared with the test suite
 > (`create_all`), so it drifted ahead of Alembic — `alembic upgrade head` hit a DuplicateColumn and was
 > resolved with `alembic stamp head` (schema already matched). Fresh deploys upgrade cleanly.
+
+## 11. Post-audit UI/UX iteration (2026-07-18, Person B)
+
+Front-end polish beyond the 8 code items, all gate-green (eslint · jest 65 · next build), most
+verified via headless-Chrome screenshots.
+
+### Login redesign (committed `11854a8`)
+- **`marketing/LiveNetwork.js`** rewritten: backdrop tours random **inland** Indian cities (fly-in →
+  hold → repeat) so the viewport is always land; each hold generates a **fresh random scene** (8–12
+  hazards, 5–7 vehicles) on a jittered grid. Vehicles drive **straight segments with sharp turns** and
+  **jolt** on crossing a hazard. **Root-cause fix:** heading was computed in %-space but the viewport
+  isn't square → cars visibly *slanted* on diagonals; now **aspect-corrected** (`atan2(dy·H, dx·W)`) so
+  the nose points along true travel. No easing → no wobble.
+- **`components/ui/Logo.js` (new)** — custom mark (road-in-perspective → detection node + sensing arcs),
+  replacing the generic pulse icon; used in the enlarged top-left brand lockup + card header.
+- **`app/login/page.js`** — slim sign-in console mounted on a glowing **beacon** (opens to the right on
+  click); **minimalist light/dark toggle** scoped to the login via `data-theme` on `<main>` (dashboard
+  untouched); deep-linkable `?theme=light|dark`. Light palette + `.glass`/leaflet overrides in
+  `globals.css`.
+
+### Admin = operator console (this batch — view/act model)
+Decision (with Person B): **admin is the internal operator, not a super-authority.** It ACTS only on
+operator tasks and VIEWs customer data read-only — keeping the repair audit log honest (a status change
+always means the authority acted).
+- **`app/page.js`** — `SECTIONS.admin` is now `["map","reports","analytics","health","users","models"]`
+  (dropped **queue** + **fleet**); the old combined "Admin Panel" is split into **three sidebar tabs**
+  (System Health / User Management / Model Registry) via `AdminView` `fixedTab`. `canAct = role !==
+  "admin"` gates map actions.
+- **Read-only map for admin:** `MapComponent` gained `canRepair` — the popup shows status + lifecycle
+  but hides the change controls for admin; `MapView` quick-action buttons hidden (`onQuickAction`
+  undefined).
+- **User CRUD (backend, admin-gated):** `POST /admin/users` (create — secure, unlike the public
+  `/auth/register` which still accepts an arbitrary role — ⚠️ **known vuln, not yet locked down**),
+  `DELETE /admin/users/{id}` (guards: no self-delete, no last-admin), `POST /admin/users/{id}/password`
+  (reset). Frontend `UserDirectory` now has an **Add-user form** + per-row **reset-password** (inline)
+  and **delete** (trash, hidden on own row). Tests: `test_admin_create_user`,
+  `test_admin_delete_and_reset_password` (auth 401/403, 409 dup, self/last-admin guards). **Backend 36
+  tests.**
+- **Telemetry Upload removed from admin System Health** — an image-upload (data-creation) box didn't
+  belong in a monitoring tab or the view-only operator model. Still available in the Fleet dashboard.
+
+> ⚠️ **Flagged, not fixed:** public `POST /auth/register` is unauthenticated and accepts `role` → anyone
+> can self-register as **admin**. Lock it down (admin-only, or strip the `role` field) in a follow-up;
+> left separate from this batch. Tests use it, so a fix must update `test_auth.py`.

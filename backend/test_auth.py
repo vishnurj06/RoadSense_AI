@@ -276,3 +276,139 @@ def test_admin_and_analytics_endpoints():
             u for u in res_users.json() if u["username"] == "test_fleet"
         )
         assert updated_fleet["role"] == "authority"
+
+
+def test_admin_create_user():
+    """POST /admin/users: admin-only account creation; role can't be self-granted."""
+    from database import SessionLocal
+    import models
+
+    db = SessionLocal()
+    for uname, urole in [("test_admin", "admin"), ("cu_fleet", "fleet")]:
+        if not db.query(models.User).filter(models.User.username == uname).first():
+            db.add(
+                models.User(
+                    username=uname,
+                    hashed_password=auth.hash_password("password"),
+                    role=urole,
+                )
+            )
+    db.commit()
+    db.close()
+
+    body = {"username": "made_by_admin", "password": "secret6", "role": "authority"}
+
+    # Anonymous cannot create a user (and definitely not an admin one).
+    with TestClient(app) as client:
+        assert client.post("/admin/users", json=body).status_code == 401
+
+    # A non-admin (fleet) cannot create users — no self-escalation.
+    with TestClient(app) as client:
+        client.cookies.set(
+            "access_token", auth.create_access_token(data={"sub": "cu_fleet"})
+        )
+        assert client.post("/admin/users", json=body).status_code == 403
+
+    # Admin creates the user; it shows up and can authenticate.
+    with TestClient(app) as client:
+        client.cookies.set(
+            "access_token", auth.create_access_token(data={"sub": "test_admin"})
+        )
+        res = client.post("/admin/users", json=body)
+        assert res.status_code == 201
+        assert res.json()["username"] == "made_by_admin"
+        assert res.json()["role"] == "authority"
+
+        listing = client.get("/admin/users").json()
+        assert any(u["username"] == "made_by_admin" for u in listing)
+
+        # Duplicate username → 409.
+        assert client.post("/admin/users", json=body).status_code == 409
+
+    # The new account can log in.
+    with TestClient(app) as client:
+        res = client.post(
+            "/auth/login", json={"username": "made_by_admin", "password": "secret6"}
+        )
+        assert res.status_code == 200
+
+
+def test_admin_delete_and_reset_password():
+    """DELETE /admin/users/{id} + POST /admin/users/{id}/password, admin-gated."""
+    from database import SessionLocal
+    import models
+
+    db = SessionLocal()
+    for uname, urole in [("test_admin", "admin"), ("mng_fleet", "fleet")]:
+        if not db.query(models.User).filter(models.User.username == uname).first():
+            db.add(
+                models.User(
+                    username=uname,
+                    hashed_password=auth.hash_password("password"),
+                    role=urole,
+                )
+            )
+    db.commit()
+    admin_id = (
+        db.query(models.User).filter(models.User.username == "test_admin").first().id
+    )
+    db.close()
+
+    admin_token = auth.create_access_token(data={"sub": "test_admin"})
+
+    # Admin creates a throwaway user, then resets its password.
+    with TestClient(app) as client:
+        client.cookies.set("access_token", admin_token)
+        created = client.post(
+            "/admin/users",
+            json={"username": "throwaway", "password": "secret6", "role": "fleet"},
+        )
+        assert created.status_code == 201
+        tid = created.json()["id"]
+        assert (
+            client.post(
+                f"/admin/users/{tid}/password", json={"password": "newpass7"}
+            ).status_code
+            == 200
+        )
+
+    # The reset takes effect: new password works, old one is rejected.
+    with TestClient(app) as client:
+        assert (
+            client.post(
+                "/auth/login", json={"username": "throwaway", "password": "newpass7"}
+            ).status_code
+            == 200
+        )
+        assert (
+            client.post(
+                "/auth/login", json={"username": "throwaway", "password": "secret6"}
+            ).status_code
+            == 401
+        )
+
+    # Delete guards + success.
+    with TestClient(app) as client:
+        client.cookies.set("access_token", admin_token)
+        # Can't delete your own account.
+        assert client.delete(f"/admin/users/{admin_id}").status_code == 400
+        # Missing user → 404.
+        assert client.delete("/admin/users/does-not-exist").status_code == 404
+        # Delete the throwaway → gone from the directory.
+        assert client.delete(f"/admin/users/{tid}").status_code == 200
+        assert not any(
+            u["username"] == "throwaway" for u in client.get("/admin/users").json()
+        )
+
+    # A non-admin can neither delete nor reset passwords.
+    with TestClient(app) as client:
+        client.cookies.set(
+            "access_token", auth.create_access_token(data={"sub": "mng_fleet"})
+        )
+        assert client.delete(f"/admin/users/{admin_id}").status_code == 403
+        assert (
+            client.post(
+                f"/admin/users/{admin_id}/password", json={"password": "abcdef7"}
+            ).status_code
+            == 403
+        )

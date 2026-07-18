@@ -4,6 +4,9 @@ import React, { useState, useEffect, useCallback } from "react";
 import { motion } from "motion/react";
 import {
   Users,
+  UserPlus,
+  KeyRound,
+  Trash2,
   Server,
   Boxes,
   Cpu,
@@ -26,7 +29,56 @@ const BACKEND_URL = "http://localhost:8000";
 
 /* ── User directory ─────────────────────────────────────────────────────── */
 
-function UserDirectory({ adminUsers, onRoleChange }) {
+function UserDirectory({
+  adminUsers,
+  onRoleChange,
+  onCreateUser,
+  onDeleteUser,
+  onResetPassword,
+  currentUserId,
+}) {
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [role, setRole] = useState("fleet");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  // Inline password reset — only one row open at a time.
+  const [editingId, setEditingId] = useState(null);
+  const [newPwd, setNewPwd] = useState("");
+  const [savingPwd, setSavingPwd] = useState(false);
+
+  const openReset = (id) => {
+    setEditingId((cur) => (cur === id ? null : id));
+    setNewPwd("");
+  };
+  const submitReset = async (id) => {
+    if (savingPwd) return;
+    setSavingPwd(true);
+    const res = await onResetPassword(id, newPwd);
+    setSavingPwd(false);
+    if (res?.ok) {
+      setEditingId(null);
+      setNewPwd("");
+    }
+  };
+
+  const submitNewUser = async (e) => {
+    e.preventDefault();
+    if (!onCreateUser || busy) return;
+    setBusy(true);
+    setErr("");
+    const res = await onCreateUser({ username: username.trim(), password, role });
+    setBusy(false);
+    if (res?.ok) {
+      setUsername("");
+      setPassword("");
+      setRole("fleet");
+    } else {
+      setErr(res?.error || "Failed to create user");
+    }
+  };
+
   return (
     <Panel
       title="User registry"
@@ -36,6 +88,53 @@ function UserDirectory({ adminUsers, onRoleChange }) {
       className="flex min-h-0 flex-col"
       bodyClassName="min-h-0"
     >
+      {/* Add user — admin-only account creation (POST /admin/users). */}
+      {onCreateUser && (
+        <form
+          onSubmit={submitNewUser}
+          className="border-line bg-raised/40 mb-2.5 flex flex-wrap items-center gap-1.5 rounded-xl border p-2"
+        >
+          <input
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            placeholder="Username"
+            autoComplete="off"
+            minLength={3}
+            required
+            className="bg-sunken border-line text-ink placeholder:text-ink-3 focus:border-accent/50 h-7 min-w-0 flex-1 rounded-md border px-2 text-[11px] outline-none transition-colors"
+          />
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="Password"
+            autoComplete="new-password"
+            minLength={6}
+            required
+            className="bg-sunken border-line text-ink placeholder:text-ink-3 focus:border-accent/50 h-7 min-w-0 flex-1 rounded-md border px-2 text-[11px] outline-none transition-colors"
+          />
+          <select
+            value={role}
+            onChange={(e) => setRole(e.target.value)}
+            aria-label="Role for new user"
+            className="bg-sunken border-line text-ink-2 focus:border-accent/50 h-7 shrink-0 cursor-pointer rounded-md border px-1.5 text-[10px] outline-none transition-colors"
+          >
+            <option value="fleet">Fleet</option>
+            <option value="authority">Authority</option>
+            <option value="admin">Admin</option>
+          </select>
+          <button
+            type="submit"
+            disabled={busy}
+            className="bg-accent/15 border-accent/30 text-accent hover:bg-accent/25 flex shrink-0 items-center gap-1 rounded-md border px-2.5 py-1 text-[11px] font-semibold transition-colors disabled:opacity-50"
+          >
+            <UserPlus className="h-3 w-3" />
+            {busy ? "Adding…" : "Add"}
+          </button>
+          {err && <span className="text-critical w-full text-[10px] font-medium">{err}</span>}
+        </form>
+      )}
+
       <div className="custom-scrollbar -mx-1 max-h-[14rem] min-h-0 overflow-y-auto px-1">
         {adminUsers.length === 0 ? (
           <EmptyState icon={Users} title="No users registered" />
@@ -45,24 +144,95 @@ function UserDirectory({ adminUsers, onRoleChange }) {
               <motion.li
                 key={u.id}
                 variants={rowIn}
-                className="bg-raised/50 border-line flex items-center justify-between gap-2 rounded-xl border p-2.5"
+                className="bg-raised/50 border-line flex flex-col gap-2 rounded-xl border p-2.5"
               >
-                <div className="flex min-w-0 flex-col gap-0.5">
-                  <span className="text-ink truncate text-[11px] font-medium">{u.username}</span>
-                  <span className="text-ink-3 tnum font-mono text-[9px]">
-                    {new Date(u.created_at).toLocaleDateString()}
-                  </span>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex min-w-0 flex-col gap-0.5">
+                    <span className="text-ink flex items-center gap-1.5 truncate text-[11px] font-medium">
+                      {u.username}
+                      {u.id === currentUserId && (
+                        <span className="text-ink-3 text-[9px] font-normal">(you)</span>
+                      )}
+                    </span>
+                    <span className="text-ink-3 tnum font-mono text-[9px]">
+                      {new Date(u.created_at).toLocaleDateString()}
+                    </span>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    <select
+                      value={u.role}
+                      onChange={(e) => onRoleChange(u.id, e.target.value)}
+                      aria-label={`Role for ${u.username}`}
+                      className="bg-sunken border-line text-ink-2 focus:border-accent/50 h-6 cursor-pointer rounded-md border px-1.5 text-[10px] outline-none transition-colors"
+                    >
+                      <option value="admin">Admin</option>
+                      <option value="authority">Authority</option>
+                      <option value="fleet">Fleet</option>
+                    </select>
+                    {onResetPassword && (
+                      <button
+                        type="button"
+                        onClick={() => openReset(u.id)}
+                        aria-label={`Reset password for ${u.username}`}
+                        title="Reset password"
+                        className={`border-line grid h-6 w-6 cursor-pointer place-items-center rounded-md border transition-colors ${
+                          editingId === u.id
+                            ? "bg-accent/10 border-accent/30 text-accent"
+                            : "bg-sunken text-ink-3 hover:text-ink-2"
+                        }`}
+                      >
+                        <KeyRound className="h-3 w-3" />
+                      </button>
+                    )}
+                    {onDeleteUser && u.id !== currentUserId && (
+                      <button
+                        type="button"
+                        onClick={() => onDeleteUser(u.id, u.username)}
+                        aria-label={`Delete ${u.username}`}
+                        title="Delete user"
+                        className="border-line bg-sunken text-ink-3 hover:border-critical/40 hover:text-critical grid h-6 w-6 cursor-pointer place-items-center rounded-md border transition-colors"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </button>
+                    )}
+                  </div>
                 </div>
-                <select
-                  value={u.role}
-                  onChange={(e) => onRoleChange(u.id, e.target.value)}
-                  aria-label={`Role for ${u.username}`}
-                  className="bg-sunken border-line text-ink-2 focus:border-accent/50 h-6 shrink-0 cursor-pointer rounded-md border px-1.5 text-[10px] outline-none transition-colors"
-                >
-                  <option value="admin">Admin</option>
-                  <option value="authority">Authority</option>
-                  <option value="fleet">Fleet</option>
-                </select>
+
+                {editingId === u.id && onResetPassword && (
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      submitReset(u.id);
+                    }}
+                    className="border-line flex items-center gap-1.5 border-t pt-2"
+                  >
+                    <input
+                      type="password"
+                      value={newPwd}
+                      onChange={(e) => setNewPwd(e.target.value)}
+                      placeholder="New password"
+                      autoComplete="new-password"
+                      minLength={6}
+                      required
+                      autoFocus
+                      className="bg-sunken border-line text-ink placeholder:text-ink-3 focus:border-accent/50 h-7 min-w-0 flex-1 rounded-md border px-2 text-[11px] outline-none transition-colors"
+                    />
+                    <button
+                      type="submit"
+                      disabled={savingPwd}
+                      className="bg-accent/15 border-accent/30 text-accent hover:bg-accent/25 shrink-0 rounded-md border px-2.5 py-1 text-[11px] font-semibold transition-colors disabled:opacity-50"
+                    >
+                      {savingPwd ? "Saving…" : "Save"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setEditingId(null)}
+                      className="text-ink-3 hover:text-ink-2 shrink-0 rounded-md px-2 py-1 text-[11px] transition-colors"
+                    >
+                      Cancel
+                    </button>
+                  </form>
+                )}
               </motion.li>
             ))}
           </motion.ul>

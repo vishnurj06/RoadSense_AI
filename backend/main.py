@@ -997,6 +997,91 @@ def list_admin_users(
     return db.query(models.User).order_by(models.User.username.asc()).all()
 
 
+@app.post(
+    "/admin/users",
+    response_model=schemas.UserResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_admin_user(
+    payload: schemas.UserRegister,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.RoleChecker(["admin"])),
+):
+    """Admin-only user creation.
+
+    Distinct from the public /auth/register: because it is gated to admins, a
+    role (including 'admin') can only ever be granted by an existing operator —
+    self-registering into a privileged role is not possible here.
+    """
+    existing = (
+        db.query(models.User).filter(models.User.username == payload.username).first()
+    )
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Username already exists.",
+        )
+    user = models.User(
+        username=payload.username,
+        hashed_password=auth.hash_password(payload.password),
+        role=payload.role,
+    )
+    db.add(user)
+    try:
+        db.commit()
+        db.refresh(user)
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
+        )
+    return user
+
+
+@app.delete("/admin/users/{user_id}")
+def delete_admin_user(
+    user_id: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.RoleChecker(["admin"])),
+):
+    """Delete a user. Guards against self-deletion and removing the last admin so
+    an operator can never lock the whole team out of the console."""
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found.")
+    if user.id == current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="You cannot delete your own account.",
+        )
+    if user.role == "admin":
+        admin_count = db.query(models.User).filter(models.User.role == "admin").count()
+        if admin_count <= 1:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot delete the last admin.",
+            )
+    db.delete(user)
+    db.commit()
+    return {"status": "success"}
+
+
+@app.post("/admin/users/{user_id}/password")
+def reset_admin_user_password(
+    user_id: str,
+    payload: schemas.PasswordReset,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.RoleChecker(["admin"])),
+):
+    """Admin resets a user's password (the 'edit' action for an account)."""
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found.")
+    user.hashed_password = auth.hash_password(payload.password)
+    db.commit()
+    return {"status": "success"}
+
+
 @app.get("/admin/system-health")
 def get_system_health(
     db: Session = Depends(get_db),

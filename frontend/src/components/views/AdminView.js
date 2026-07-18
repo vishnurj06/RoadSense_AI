@@ -5,7 +5,6 @@ import { motion, AnimatePresence } from "motion/react";
 import { Server, Users, Boxes } from "lucide-react";
 import Gauge from "@/components/ui/Gauge";
 import { SystemHealthPanel, UserDirectory, ModelRegistryPanel } from "@/components/dashboards/AdminDashboard";
-import UploadPanel from "@/components/shared/UploadPanel";
 import { ACCENT, STATUS } from "@/lib/theme";
 import { T, rise, stagger } from "@/lib/motion";
 
@@ -34,13 +33,27 @@ const TABS = [
  * truth removes the fall-through entirely: there is no default branch to get
  * wrong, because every tab id maps to exactly one panel.
  */
-export default function AdminView({ adminUsers, systemHealth, onRoleChange, onUpload, uploading }) {
-  const [tab, setTab] = useState("system");
+export default function AdminView({
+  adminUsers,
+  systemHealth,
+  onRoleChange,
+  onCreateUser,
+  onDeleteUser,
+  onResetPassword,
+  currentUserId,
+  fixedTab,
+}) {
+  const [internalTab, setInternalTab] = useState("system");
+  // When mounted as a single top-level destination (health / users / models),
+  // `fixedTab` pins the panel and the in-panel tab bar is hidden — the sidebar
+  // is the tab strip now. Without it, the three-tab panel behaves as before.
+  const tab = fixedTab ?? internalTab;
 
   return (
     <div className="custom-scrollbar min-h-0 flex-1 overflow-y-auto p-3">
       <div className="flex flex-col gap-3">
-        {/* Tabs */}
+        {/* Tabs — only when this panel owns the tabbing (no fixedTab) */}
+        {!fixedTab && (
         <div className="border-line bg-surface/60 inline-flex w-fit gap-1 rounded-xl border p-1 backdrop-blur-xl">
           {TABS.map(({ id, label, icon: Icon }) => {
             const active = tab === id;
@@ -48,7 +61,7 @@ export default function AdminView({ adminUsers, systemHealth, onRoleChange, onUp
               <button
                 key={id}
                 type="button"
-                onClick={() => setTab(id)}
+                onClick={() => setInternalTab(id)}
                 aria-current={active ? "page" : undefined}
                 className={`relative flex cursor-pointer items-center gap-2 rounded-lg px-3 py-1.5 text-[12px] font-medium transition-colors ${
                   active ? "text-accent" : "text-ink-3 hover:text-ink-2"
@@ -67,6 +80,7 @@ export default function AdminView({ adminUsers, systemHealth, onRoleChange, onUp
             );
           })}
         </div>
+        )}
 
         <AnimatePresence mode="wait">
           <motion.div
@@ -77,11 +91,16 @@ export default function AdminView({ adminUsers, systemHealth, onRoleChange, onUp
             exit={{ opacity: 0, y: -6, transition: T.fast }}
             className="flex flex-col gap-3"
           >
-            {tab === "system" && (
-              <SystemTab systemHealth={systemHealth} onUpload={onUpload} uploading={uploading} />
-            )}
+            {tab === "system" && <SystemTab systemHealth={systemHealth} />}
             {tab === "users" && (
-              <UserDirectory adminUsers={adminUsers} onRoleChange={onRoleChange} />
+              <UserDirectory
+                adminUsers={adminUsers}
+                onRoleChange={onRoleChange}
+                onCreateUser={onCreateUser}
+                onDeleteUser={onDeleteUser}
+                onResetPassword={onResetPassword}
+                currentUserId={currentUserId}
+              />
             )}
             {tab === "models" && <ModelRegistryPanel />}
           </motion.div>
@@ -91,7 +110,7 @@ export default function AdminView({ adminUsers, systemHealth, onRoleChange, onUp
   );
 }
 
-function SystemTab({ systemHealth, onUpload, uploading }) {
+function SystemTab({ systemHealth }) {
   if (!systemHealth) {
     return (
       <motion.div variants={rise} className="border-line bg-surface/60 rounded-2xl border p-10 text-center backdrop-blur-xl">
@@ -145,10 +164,6 @@ function SystemTab({ systemHealth, onUpload, uploading }) {
 
       <motion.div variants={rise}>
         <SystemHealthPanel systemHealth={systemHealth} />
-      </motion.div>
-
-      <motion.div variants={rise} className="max-w-md">
-        <UploadPanel onUpload={onUpload} uploading={uploading} />
       </motion.div>
     </>
   );

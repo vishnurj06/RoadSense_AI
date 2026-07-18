@@ -19,7 +19,9 @@ import {
   Table2,
   BarChart3,
   Car,
-  Shield,
+  Server,
+  Users,
+  Boxes,
   ListChecks,
   RefreshCw,
   Satellite,
@@ -94,7 +96,10 @@ const VIEW = {
   reports: { label: "Report Logs", icon: Table2, title: "Report Logs", subtitle: "Raw telemetry from all vehicles", w: 1040 },
   analytics: { label: "Analytics", icon: BarChart3, title: "Operations Analytics", subtitle: "Trend, hazard mix & road health", w: 1100 },
   fleet: { label: "Fleet", icon: Car, title: "Fleet Registry", subtitle: "Vehicle status & camera health", w: 820 },
-  admin: { label: "Admin Panel", icon: Shield, title: "System Administration", subtitle: "Health, users & model registry", w: 1100 },
+  // Admin operator console — three focused destinations, not one catch-all panel.
+  health: { label: "System Health", icon: Server, title: "System Health", subtitle: "CPU, memory, disk, DB & inference", w: 1100 },
+  users: { label: "User Management", icon: Users, title: "User Management", subtitle: "Accounts & role assignment", w: 720 },
+  models: { label: "Model Registry", icon: Boxes, title: "AI Model Registry", subtitle: "Registered versions & activation", w: 900 },
 };
 
 /**
@@ -107,15 +112,21 @@ const VIEW = {
  *
  * So Authority does NOT get Fleet (vehicle/camera health is the operator's
  * concern, not the road authority's), and Fleet does NOT get Analytics.
- * Admin is the superset by definition.
+ *
+ * Admin is the internal OPERATOR, not a super-authority. It ACTS only on operator
+ * tasks (system health, users, model registry) and can VIEW customer data
+ * read-only (map, reports, analytics) for oversight/support — but it does NOT get
+ * the action surfaces (Action Queue dispatch, Fleet management). Keeping admin
+ * view-only on customer data also keeps the repair audit log honest: a status
+ * change always means the authority acted, never "someone with god-mode".
  */
 const SECTIONS = {
   // Live map · Severity · Pending reports · Repair tracking · Analytics
   authority: ["map", "queue", "reports", "analytics"],
   // Vehicle status · Detection history · Camera health
   fleet: ["map", "fleet", "reports"],
-  // User management · AI model management · System monitoring (+ the superset)
-  admin: ["map", "queue", "reports", "analytics", "fleet", "admin"],
+  // Operator console (act) + read-only oversight of customer data (view).
+  admin: ["map", "reports", "analytics", "health", "users", "models"],
 };
 
 /** Each role lands on ITS dashboard, not on someone else's. */
@@ -365,6 +376,76 @@ export default function Dashboard() {
     }
   };
 
+  // Admin-only account creation via the gated POST /admin/users. Returns a
+  // result so the form can clear on success or surface an inline error.
+  const handleUserCreate = async ({ username, password, role }) => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/admin/users`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password, role }),
+        credentials: "include",
+      });
+      if (res.ok) {
+        showToast(`User "${username}" created`, "success");
+        refresh();
+        return { ok: true };
+      }
+      const e = await res.json().catch(() => ({}));
+      const msg =
+        typeof e.detail === "string" ? e.detail : "Failed to create user";
+      showToast(msg, "error");
+      return { ok: false, error: msg };
+    } catch {
+      showToast("Connection error", "error");
+      return { ok: false, error: "Connection error" };
+    }
+  };
+
+  const handleUserDelete = async (userId, username) => {
+    if (!window.confirm(`Delete user "${username}"? This cannot be undone.`)) return;
+    try {
+      const res = await fetch(`${BACKEND_URL}/admin/users/${userId}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      if (res.ok) {
+        showToast(`User "${username}" deleted`, "success");
+        refresh();
+      } else {
+        const e = await res.json().catch(() => ({}));
+        showToast(typeof e.detail === "string" ? e.detail : "Failed to delete user", "error");
+      }
+    } catch {
+      showToast("Connection error", "error");
+    }
+  };
+
+  // Password reset is the account "edit" action. Returns a result so the inline
+  // form can close on success or show an error.
+  const handleUserPasswordReset = async (userId, password) => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/admin/users/${userId}/password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password }),
+        credentials: "include",
+      });
+      if (res.ok) {
+        showToast("Password reset", "success");
+        return { ok: true };
+      }
+      const e = await res.json().catch(() => ({}));
+      const msg =
+        typeof e.detail === "string" ? e.detail : "Failed to reset password";
+      showToast(msg, "error");
+      return { ok: false, error: msg };
+    } catch {
+      showToast("Connection error", "error");
+      return { ok: false, error: "Connection error" };
+    }
+  };
+
   const handleImageUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -421,6 +502,11 @@ export default function Dashboard() {
   const ids = SECTIONS[role] || [];
   const sections = ids.map((id) => ({ id, ...VIEW[id] }));
   const meta = VIEW[view] || VIEW.map;
+
+  // Admin is the operator: it can VIEW customer data but not ACT on the repair
+  // workflow. `canAct` gates the map's status controls and the quick-action
+  // buttons so admin's map/reports/analytics are genuinely read-only.
+  const canAct = role !== "admin";
 
   const filterProps = {
     severityFilter,
@@ -519,6 +605,7 @@ export default function Dashboard() {
                 onRefresh={() => refresh()}
                 roadHealthSegments={roadHealthSegments}
                 showRoadHealth={showRoadHealth}
+                canRepair={canAct}
               />
             </div>
 
@@ -548,7 +635,7 @@ export default function Dashboard() {
                   {view === "map" && (
                     <MapView
                       filteredIssues={filteredIssues}
-                      onQuickAction={handleQuickAction}
+                      onQuickAction={canAct ? handleQuickAction : undefined}
                       filterProps={filterProps}
                     />
                   )}
@@ -582,15 +669,23 @@ export default function Dashboard() {
                     />
                   )}
 
-                  {view === "admin" && (
+                  {view === "health" && (
+                    <AdminView fixedTab="system" systemHealth={systemHealth} />
+                  )}
+
+                  {view === "users" && (
                     <AdminView
+                      fixedTab="users"
                       adminUsers={adminUsers}
-                      systemHealth={systemHealth}
                       onRoleChange={handleUserRoleToggle}
-                      onUpload={handleImageUpload}
-                      uploading={uploading}
+                      onCreateUser={handleUserCreate}
+                      onDeleteUser={handleUserDelete}
+                      onResetPassword={handleUserPasswordReset}
+                      currentUserId={user?.id}
                     />
                   )}
+
+                  {view === "models" && <AdminView fixedTab="models" />}
                 </div>
               </motion.aside>
             </AnimatePresence>

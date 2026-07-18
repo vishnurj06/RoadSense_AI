@@ -138,7 +138,7 @@ function Row({ label, children }) {
   );
 }
 
-function IssuePopupContent({ report, onRefresh }) {
+function IssuePopupContent({ report, onRefresh, canRepair = true }) {
   const router = useRouter();
   const currentStatus = report.status || "detected";
   const validNextStates = statusTransitionMap[currentStatus.toLowerCase()] || [];
@@ -326,7 +326,13 @@ function IssuePopupContent({ report, onRefresh }) {
             good/bad, so it has no claim on the status palette. */}
         <StatusTrack status={currentStatus} />
 
-        {validNextStates.length > 0 ? (
+        {!canRepair ? (
+          // Admin (operator) views the workflow read-only — changing a repair
+          // status is the authority's action, so the audit log stays honest.
+          <span className="text-ink-3 text-[10px] italic">
+            View only — repair status is managed by the authority.
+          </span>
+        ) : validNextStates.length > 0 ? (
           <div className="flex flex-col gap-1.5">
             <select
               value={statusInput}
@@ -375,6 +381,7 @@ export default function MapComponent({
   onRefresh,
   roadHealthSegments = [],
   showRoadHealth = false,
+  canRepair = true,
 }) {
   // Mumbai default center
   const defaultCenter = [19.076, 72.8777];
@@ -442,7 +449,7 @@ export default function MapComponent({
               )}
             >
               <Popup className="roadsense-popup" maxWidth={280} minWidth={248}>
-                <IssuePopupContent report={report} onRefresh={onRefresh} />
+                <IssuePopupContent report={report} onRefresh={onRefresh} canRepair={canRepair} />
               </Popup>
             </Marker>
           );
